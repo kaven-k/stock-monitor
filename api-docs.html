@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StockMonitor API 文档 v1</title>
+    <style>
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;color:#1a1a2e;background:#f0f2f5;line-height:1.6}
+        .container{max-width:960px;margin:0 auto;padding:40px 20px}
+        h1{font-size:28px;font-weight:700;margin-bottom:8px}
+        .subtitle{font-size:14px;color:#606770;margin-bottom:32px}
+        .badge{display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600}
+        .badge-green{background:#d3f9d8;color:#2b8a3e}
+        .badge-blue{background:#eff6ff;color:#3b82f6}
+        .alert-box{background:#fff3bf;border-left:3px solid #f59e0b;padding:14px 18px;border-radius:6px;margin-bottom:24px;font-size:13px}
+        .alert-box strong{color:#e67700}
+        .section{margin-bottom:40px;background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden}
+        .section-header{background:#f8f9fa;padding:16px 20px;border-bottom:1px solid #e4e6eb}
+        .section-header h2{font-size:16px;font-weight:700}
+        .section-header .endpoint{font-size:12px;color:#606770;margin-top:4px;font-family:monospace}
+        .section-body{padding:20px}
+        .method{display:inline-flex;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;font-family:monospace;margin-right:8px}
+        .method-get{background:#d3f9d8;color:#2b8a3e}
+        .method-post{background:#eff6ff;color:#3b82f6}
+        .method-put{background:#fff3bf;color:#e67700}
+        .method-delete{background:#ffe3e3;color:#c92a2a}
+        .param-table{width:100%;border-collapse:collapse;margin:12px 0}
+        .param-table th{background:#f8f9fa;padding:8px 12px;text-align:left;font-size:12px;font-weight:600;color:#606770;border-bottom:1px solid #e4e6eb}
+        .param-table td{padding:8px 12px;font-size:13px;border-bottom:1px solid #f0f2f5;font-family:monospace}
+        .param-table td:first-child{color:#3b82f6}
+        .param-table td:nth-child(2){color:#606770;font-family:inherit;font-size:13px}
+        pre{background:#1a1a2e;color:#d4d4d8;padding:16px;border-radius:6px;font-size:12px;overflow-x:auto;margin:12px 0;line-height:1.8}
+        .toc{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:24px}
+        .toc a{display:inline-flex;align-items:center;padding:4px 12px;background:#fff;border:1px solid #e4e6eb;border-radius:6px;font-size:12px;color:#3b82f6;text-decoration:none;transition:all .2s}
+        .toc a:hover{background:#eff6ff;border-color:#3b82f6}
+        .error-table{margin:12px 0;width:100%}
+        .error-table td{padding:6px 12px;font-size:12px;border-bottom:1px solid #f0f2f5}
+        .error-table td:first-child{font-family:monospace;font-weight:600;color:#ef4444;white-space:nowrap}
+        .error-table td:last-child{font-family:monospace;font-size:11px}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>StockMonitor API 文档 <span class="badge badge-green">v1</span></h1>
+        <div class="subtitle">股票实时监控系统 REST API · 前后端分离架构 · JWT 认证</div>
+
+        <div class="toc">
+            <a href="#base">基础信息</a>
+            <a href="#auth">认证接口</a>
+            <a href="#stocks">股票管理</a>
+            <a href="#groups">分组管理</a>
+            <a href="#alerts">预警系统</a>
+            <a href="#quotes">行情数据</a>
+            <a href="#monitor">监控控制</a>
+            <a href="#errors">错误码</a>
+        </div>
+
+        <div class="alert-box"><strong>⚠️ 认证说明：</strong>除登录/注册外的所有接口均需携带 JWT Token，格式为 <code>Authorization: Bearer &lt;token&gt;</code>。Token 有效期 24 小时。</div>
+
+        <!-- 基础信息 -->
+        <div class="section" id="base">
+            <div class="section-header"><h2>基础信息</h2></div>
+            <div class="section-body">
+                <table class="param-table">
+                    <tr><th>项目</th><th>说明</th></tr>
+                    <tr><td>Base URL</td><td>http://localhost:5000/api/v1</td></tr>
+                    <tr><td>认证方式</td><td>JWT Bearer Token (HS256)</td></tr>
+                    <tr><td>请求格式</td><td>application/json</td></tr>
+                    <tr><td>响应格式</td><td>application/json</td></tr>
+                    <tr><td>CORS</td><td>已启用 (支持跨域)</td></tr>
+                </table>
+                <p style="margin-top:16px;font-weight:600">统一响应格式：</p>
+                <pre>// 成功
+{"code": 0, "msg": "ok", "data": {...}}
+
+// 失败  
+{"code": 40101, "msg": "未提供认证令牌", "error": "UNAUTHORIZED"}</pre>
+            </div>
+        </div>
+
+        <!-- 认证 -->
+        <div class="section" id="auth">
+            <div class="section-header"><h2>认证接口</h2><div class="endpoint">/api/v1/auth/*</div></div>
+            <div class="section-body">
+
+                <p><span class="method method-post">POST</span><strong>/auth/register</strong> — 用户注册</p>
+                <table class="param-table">
+                    <tr><th>参数</th><th>说明</th><th>必填</th></tr>
+                    <tr><td>username</td><td>用户名 (≥3字符)</td><td>是</td></tr>
+                    <tr><td>password</td><td>密码 (≥6字符)</td><td>是</td></tr>
+                </table>
+                <pre>// Response
+{"code":0,"msg":"注册成功","data":{"user_id":1,"username":"admin","token":"eyJ...","expires_at":"..."}}</pre>
+
+                <p style="margin-top:20px"><span class="method method-post">POST</span><strong>/auth/login</strong> — 用户登录</p>
+                <table class="param-table">
+                    <tr><th>参数</th><th>说明</th><th>必填</th></tr>
+                    <tr><td>username</td><td>用户名</td><td>是</td></tr>
+                    <tr><td>password</td><td>密码</td><td>是</td></tr>
+                </table>
+                <pre>// Response
+{"code":0,"msg":"登录成功","data":{"token":"eyJ...","token_type":"Bearer","expires_at":"..."}}</pre>
+
+                <p style="margin-top:20px"><span class="method method-post">POST</span><strong>/auth/logout</strong> <span class="badge badge-blue">需认证</span> — 登出 (Token 加入黑名单)</p>
+                <pre>curl -X POST http://localhost:5000/api/v1/auth/logout \
+  -H "Authorization: Bearer TOKEN"</pre>
+
+                <p style="margin-top:20px"><span class="method method-get">GET</span><strong>/auth/me</strong> <span class="badge badge-blue">需认证</span> — 获取当前用户信息</p>
+                <pre>// Response
+{"code":0,"data":{"user_id":1,"username":"admin","role":"user","created_at":"...","last_login":"..."}}</pre>
+            </div>
+        </div>
+
+        <!-- 股票管理 -->
+        <div class="section" id="stocks">
+            <div class="section-header"><h2>股票管理</h2><div class="endpoint">/api/v1/stocks/*</div></div>
+            <div class="section-body">
+                <p><span class="method method-get">GET</span><strong>/stocks</strong> <span class="badge badge-blue">需认证</span> — 获取所有股票</p>
+                <pre>// Response
+{"code":0,"data":[{"code":"600519","name":"贵州茅台","market":"A","added_at":"...","is_active":1}]}</pre>
+
+                <p style="margin-top:20px"><span class="method method-get">GET</span><strong>/stocks/search?keyword=茅台</strong> <span class="badge badge-blue">需认证</span> — 搜索股票</p>
+                <pre>// Response  
+{"code":0,"data":[{"code":"600519","name":"贵州茅台","market":"SH"}]}</pre>
+
+                <p style="margin-top:20px"><span class="method method-post">POST</span><strong>/stocks</strong> <span class="badge badge-blue">需认证</span> — 添加股票</p>
+                <table class="param-table">
+                    <tr><th>参数</th><th>说明</th><th>必填</th></tr>
+                    <tr><td>code</td><td>股票代码</td><td>是</td></tr>
+                    <tr><td>name</td><td>股票名称</td><td>是</td></tr>
+                    <tr><td>market</td><td>市场 (默认 A)</td><td>否</td></tr>
+                </table>
+
+                <p style="margin-top:20px"><span class="method method-delete">DELETE</span><strong>/stocks/{code}</strong> <span class="badge badge-blue">需认证</span> — 删除股票</p>
+            </div>
+        </div>
+
+        <!-- 分组 -->
+        <div class="section" id="groups">
+            <div class="section-header"><h2>分组管理</h2><div class="endpoint">/api/v1/groups/*</div></div>
+            <div class="section-body">
+                <p><span class="method method-get">GET</span><strong>/groups</strong> <span class="badge badge-blue">需认证</span> — 获取所有分组</p>
+                <p style="margin-top:20px"><span class="method method-post">POST</span><strong>/groups</strong> <span class="badge badge-blue">需认证</span> — 创建分组</p>
+                <table class="param-table">
+                    <tr><td>name</td><td>分组名称</td><td>是</td></tr>
+                    <tr><td>color</td><td>颜色 (默认 #3b82f6)</td><td>否</td></tr>
+                </table>
+                <p style="margin-top:20px"><span class="method method-put">PUT</span><strong>/groups/{id}</strong> <span class="badge badge-blue">需认证</span> — 更新分组</p>
+                <p style="margin-top:20px"><span class="method method-delete">DELETE</span><strong>/groups/{id}</strong> <span class="badge badge-blue">需认证</span> — 删除分组</p>
+                <p style="margin-top:20px"><span class="method method-post">POST</span><strong>/groups/{id}/stocks</strong> <span class="badge badge-blue">需认证</span> — 股票加入分组</p>
+                <p style="margin-top:20px"><span class="method method-delete">DELETE</span><strong>/groups/{id}/stocks/{code}</strong> <span class="badge badge-blue">需认证</span> — 从分组移除</p>
+            </div>
+        </div>
+
+        <!-- 预警 -->
+        <div class="section" id="alerts">
+            <div class="section-header"><h2>预警系统</h2><div class="endpoint">/api/v1/alerts/*</div></div>
+            <div class="section-body">
+                <p><span class="method method-get">GET</span><strong>/alerts/rules</strong> <span class="badge badge-blue">需认证</span> — 获取预警规则</p>
+                <p style="margin-top:20px"><span class="method method-post">POST</span><strong>/alerts/rules</strong> <span class="badge badge-blue">需认证</span> — 创建预警规则</p>
+                <table class="param-table">
+                    <tr><td>name</td><td>规则名称</td><td>是</td></tr>
+                    <tr><td>rule_type</td><td>类型 (见下表)</td><td>是</td></tr>
+                    <tr><td>params</td><td>参数对象 {threshold: 5}</td><td>是</td></tr>
+                    <tr><td>stock_codes</td><td>股票代码数组</td><td>是</td></tr>
+                    <tr><td>notify_feishu</td><td>飞书通知 (0/1)</td><td>否</td></tr>
+                </table>
+                <p style="margin-top:12px;font-size:12px;color:#606770"><strong>支持的预警类型：</strong></p>
+                <table class="param-table">
+                    <tr><th>rule_type</th><th>说明</th><th>参数</th></tr>
+                    <tr><td>price_up</td><td>价格向上突破</td><td>threshold (价格阈值)</td></tr>
+                    <tr><td>price_down</td><td>价格向下跌破</td><td>threshold</td></tr>
+                    <tr><td>change_up</td><td>涨幅超过阈值</td><td>threshold (%)</td></tr>
+                    <tr><td>change_down</td><td>跌幅超过阈值</td><td>threshold (%)</td></tr>
+                    <tr><td>volume_surge</td><td>成交量异动</td><td>multiplier, avg_days</td></tr>
+                    <tr><td>turnover_high</td><td>换手率过高</td><td>threshold (%)</td></tr>
+                    <tr><td>amplitude_high</td><td>振幅过大</td><td>threshold (%)</td></tr>
+                    <tr><td>price_break_ma</td><td>价格突破均线</td><td>direction, ma_period</td></tr>
+                    <tr><td>continuous_up</td><td>连续上涨</td><td>days</td></tr>
+                    <tr><td>continuous_down</td><td>连续下跌</td><td>days</td></tr>
+                    <tr><td>volume_ratio</td><td>量比异常</td><td>threshold</td></tr>
+                    <tr><td>limit_up</td><td>触及涨停</td><td>—</td></tr>
+                    <tr><td>limit_down</td><td>触及跌停</td><td>—</td></tr>
+                </table>
+                <p style="margin-top:20px"><span class="method method-get">GET</span><strong>/alerts/logs?limit=50</strong> <span class="badge badge-blue">需认证</span> — 获取预警日志</p>
+                <p style="margin-top:12px"><span class="method method-post">POST</span><strong>/alerts/logs/{id}/read</strong> <span class="badge badge-blue">需认证</span> — 标记已读</p>
+            </div>
+        </div>
+
+        <!-- 行情 -->
+        <div class="section" id="quotes">
+            <div class="section-header"><h2>行情数据</h2><div class="endpoint">/api/v1/quotes, /api/v1/kline</div></div>
+            <div class="section-body">
+                <p><span class="method method-get">GET</span><strong>/quotes?codes=600519,000858</strong> <span class="badge badge-blue">需认证</span> — 实时行情</p>
+                <pre>// Response
+{"code":0,"data":{"quotes":{"600519":{"price":1168.63,"change_pct":-1.3,...}},"time":"01:22:00"}}</pre>
+
+                <p style="margin-top:20px"><span class="method method-get">GET</span><strong>/kline/{code}?period=day&count=250</strong> <span class="badge badge-blue">需认证</span> — K线+技术指标</p>
+                <pre>// Response
+{"code":0,"data":{"kline":[{date,open,high,low,close,volume},...],
+  "indicators":{"ma5":[],"ma10":[],"ma20":[],"ma60":[],"macd":[],"rsi6":[],"kdj":[],"boll":[]}}}</pre>
+            </div>
+        </div>
+
+        <!-- 监控 -->
+        <div class="section" id="monitor">
+            <div class="section-header"><h2>监控控制</h2><div class="endpoint">/api/v1/monitor/*</div></div>
+            <div class="section-body">
+                <p><span class="method method-get">GET</span><strong>/monitor/status</strong> <span class="badge badge-blue">需认证</span> — 获取监控状态</p>
+                <p style="margin-top:20px"><span class="method method-post">POST</span><strong>/monitor/start</strong> <span class="badge badge-blue">需认证</span> — 启动监控</p>
+                <p style="margin-top:12px"><span class="method method-post">POST</span><strong>/monitor/stop</strong> <span class="badge badge-blue">需认证</span> — 停止监控</p>
+                <p style="margin-top:12px"><span class="method method-post">POST</span><strong>/monitor/interval</strong> <span class="badge badge-blue">需认证</span> — 设置刷新间隔</p>
+                <table class="param-table">
+                    <tr><td>interval</td><td>刷新间隔秒 (1-60)</td><td>是</td></tr>
+                </table>
+                <p style="margin-top:16px;font-size:13px;color:#606770">实时推送通过 <strong>WebSocket</strong> 实现：连接 <code>http://localhost:5000</code> (Socket.IO)</p>
+                <pre>// WebSocket 事件
+socket.on('quotes_update', data => {
+  // data = { data: { code: quote }, time: "HH:MM:SS" }
+})
+socket.on('alerts_new', data => {
+  // data = { count: N, alerts: [...] }
+})</pre>
+            </div>
+        </div>
+
+        <!-- 错误码 -->
+        <div class="section" id="errors">
+            <div class="section-header"><h2>错误码参考</h2></div>
+            <div class="section-body">
+                <table class="error-table param-table">
+                    <tr><th>错误码</th><th>error</th><th>说明</th></tr>
+                    <tr><td>40001</td><td>BAD_REQUEST</td><td>请求格式错误</td></tr>
+                    <tr><td>40002</td><td>VALIDATION_ERROR</td><td>参数校验失败</td></tr>
+                    <tr><td>40003</td><td>VALIDATION_ERROR</td><td>密码不符合要求</td></tr>
+                    <tr><td>40101</td><td>UNAUTHORIZED</td><td>未提供认证令牌</td></tr>
+                    <tr><td>40102</td><td>TOKEN_BLACKLISTED</td><td>令牌已失效(已登出)</td></tr>
+                    <tr><td>40103</td><td>TOKEN_EXPIRED</td><td>令牌已过期</td></tr>
+                    <tr><td>40104</td><td>INVALID_TOKEN</td><td>无效令牌</td></tr>
+                    <tr><td>40105</td><td>AUTH_FAILED</td><td>用户名或密码错误</td></tr>
+                    <tr><td>40301</td><td>FORBIDDEN</td><td>需要管理员权限</td></tr>
+                    <tr><td>40400</td><td>NOT_FOUND</td><td>接口不存在</td></tr>
+                    <tr><td>40901</td><td>CONFLICT</td><td>用户名已存在</td></tr>
+                    <tr><td>50000</td><td>INTERNAL_ERROR</td><td>服务器内部错误</td></tr>
+                    <tr><td>50001</td><td>DB_ERROR</td><td>数据库操作失败</td></tr>
+                    <tr><td>50002</td><td>DATA_ERROR</td><td>数据获取失败</td></tr>
+                </table>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

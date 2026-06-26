@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StockMonitor - 股票监控系统</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/socket.io@4.7.4/client-dist/socket.io.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- 侧边栏 -->
+        <aside class="sidebar">
+            <div class="sidebar-logo">
+                <div class="icon">S</div>
+                <span class="title">StockMonitor</span>
+            </div>
+            <nav class="sidebar-nav">
+                <div class="sidebar-section">
+                    <div class="sidebar-section-title">监控视图</div>
+                    <div class="sidebar-item active" data-view="all">
+                        <span>全部股票</span>
+                        <span class="count" id="nav-all-count">0</span>
+                    </div>
+                    <div class="sidebar-item" data-view="alerts">
+                        <span>预警记录</span>
+                        <span class="count" id="nav-alert-count" style="background:#fef2f2;color:#ef4444">0</span>
+                    </div>
+                </div>
+                <div class="sidebar-section">
+                    <div class="sidebar-section-title">
+                        股票分组
+                        <button class="btn-icon btn-xs" onclick="showAddGroupModal()" style="float:right;font-size:12px;margin-top:-2px" title="新建分组">+</button>
+                    </div>
+                    <div id="group-list"></div>
+                </div>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="monitor-status" id="monitor-status">
+                    <span class="status-dot running" id="status-dot"></span>
+                    <span id="status-text">监控运行中</span>
+                    <span style="margin-left:auto;font-size:11px" id="status-time"></span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 主内容 -->
+        <main class="main-content">
+            <!-- 顶部栏 -->
+            <header class="top-bar">
+                <div class="top-bar-left">
+                    <span class="top-bar-title" id="view-title">全部股票</span>
+                </div>
+                <div class="top-bar-right">
+                    <button class="btn btn-sm" onclick="showAddStockModal()" id="btn-add-stock">+ 添加股票</button>
+                    <button class="btn btn-sm" onclick="showAlertRuleModal()">+ 预警规则</button>
+                    <button class="btn btn-sm" id="btn-monitor-toggle" onclick="toggleMonitor()">⏸ 暂停监控</button>
+                    <span style="font-size:12px;color:var(--text-muted)">刷新: <span id="refresh-countdown">5</span>s</span>
+                </div>
+            </header>
+
+            <!-- 工具栏 -->
+            <div class="toolbar">
+                <div class="search-box" style="position:relative">
+                    <span class="search-icon">🔍</span>
+                    <input type="text" placeholder="搜索股票代码/名称..." id="table-search" oninput="filterStocks()">
+                </div>
+                <div class="toolbar-divider"></div>
+                <button class="btn btn-sm" onclick="sortBy('change_pct')">涨跌幅排序</button>
+                <button class="btn btn-sm" onclick="sortBy('volume')">成交量排序</button>
+                <button class="btn btn-sm" onclick="sortBy('turnover_pct')">换手率排序</button>
+                <span style="margin-left:auto;font-size:12px;color:var(--text-muted);" id="last-update-time"></span>
+            </div>
+
+            <!-- 内容区 -->
+            <div class="content-area">
+                <!-- 股票列表 -->
+                <div class="stock-panel">
+                    <div class="stock-table-wrapper">
+                        <table class="stock-table">
+                            <thead>
+                                <tr>
+                                    <th style="width:160px">股票</th>
+                                    <th class="sortable" onclick="sortBy('price')">现价</th>
+                                    <th class="sortable" onclick="sortBy('change_pct')">涨跌幅</th>
+                                    <th class="sortable" onclick="sortBy('open')">今开</th>
+                                    <th class="sortable" onclick="sortBy('high')">最高</th>
+                                    <th class="sortable" onclick="sortBy('low')">最低</th>
+                                    <th class="sortable" onclick="sortBy('volume')">成交量</th>
+                                    <th class="sortable" onclick="sortBy('amount_wan')">成交额</th>
+                                    <th class="sortable" onclick="sortBy('turnover_pct')">换手率</th>
+                                    <th class="sortable" onclick="sortBy('pe_ttm')">PE</th>
+                                    <th class="sortable" onclick="sortBy('pb')">PB</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="stock-table-body">
+                                <tr><td colspan="12"><div class="empty-state"><div class="icon">📊</div><div class="text">暂无股票数据<br><small>点击"添加股票"开始监控</small></div></div></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 详情面板 -->
+                <div class="detail-panel collapsed" id="detail-panel">
+                    <div class="detail-header">
+                        <div class="detail-header-info">
+                            <h3 id="detail-name">--</h3>
+                            <span class="code" id="detail-code"></span>
+                        </div>
+                        <button class="btn-icon" onclick="closeDetail()" title="关闭">✕</button>
+                    </div>
+                    <div class="detail-tabs">
+                        <div class="detail-tab active" onclick="switchDetailTab('chart', this)">K线图</div>
+                        <div class="detail-tab" onclick="switchDetailTab('indicator', this)">技术指标</div>
+                        <div class="detail-tab" onclick="switchDetailTab('info', this)">基本信息</div>
+                    </div>
+                    <div class="detail-content" id="detail-content">
+                        <!-- 动态填充 -->
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- 添加股票模态框 -->
+    <div class="modal-overlay" id="modal-add-stock" style="display:none">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>添加股票</h3>
+                <button class="btn-icon" onclick="closeModal('modal-add-stock')">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group" style="position:relative">
+                    <label>搜索股票</label>
+                    <input type="text" class="form-input" id="stock-search-input" placeholder="输入代码或名称搜索..." oninput="searchStocks()">
+                    <div id="search-results" class="search-results" style="display:none"></div>
+                </div>
+                <div style="margin-top:16px;border-top:1px solid var(--border-light);padding-top:12px">
+                    <div class="form-group">
+                        <label>或手动输入</label>
+                        <div style="display:flex;gap:8px">
+                            <input type="text" class="form-input" id="manual-code" placeholder="股票代码 (如 600519)" style="flex:1">
+                            <input type="text" class="form-input" id="manual-name" placeholder="股票名称" style="flex:1">
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" onclick="addStockManual()">确认添加</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 预警规则模态框 -->
+    <div class="modal-overlay" id="modal-alert-rule" style="display:none">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>创建预警规则</h3>
+                <button class="btn-icon" onclick="closeModal('modal-alert-rule')">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>规则名称</label>
+                    <input type="text" class="form-input" id="alert-rule-name" placeholder="如：茅台突破2000元">
+                </div>
+                <div class="form-group">
+                    <label>预警类型</label>
+                    <select class="form-select" id="alert-rule-type" onchange="onAlertTypeChange()">
+                        <option value="price_up">价格向上突破</option>
+                        <option value="price_down">价格向下跌破</option>
+                        <option value="change_up">涨幅超过阈值</option>
+                        <option value="change_down">跌幅超过阈值</option>
+                        <option value="volume_surge">成交量异动（放量）</option>
+                        <option value="turnover_high">换手率过高</option>
+                        <option value="amplitude_high">振幅过大</option>
+                        <option value="price_break_ma">价格突破均线</option>
+                        <option value="continuous_up">连续上涨</option>
+                        <option value="continuous_down">连续下跌</option>
+                        <option value="volume_ratio">量比异常</option>
+                        <option value="limit_up">触及涨停</option>
+                        <option value="limit_down">触及跌停</option>
+                    </select>
+                </div>
+                <div class="form-group" id="alert-params-container">
+                    <label>参数</label>
+                    <div id="alert-params"></div>
+                </div>
+                <div class="form-group">
+                    <label>监控股票（可多选）</label>
+                    <div id="alert-stock-select" style="max-height:200px;overflow-y:auto;border:1px solid var(--border-color);border-radius:var(--radius-sm);padding:8px">
+                        <div style="color:var(--text-muted);font-size:12px">请先添加股票到监控列表</div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="toggle" style="vertical-align:middle;margin-right:8px">
+                        <input type="checkbox" id="alert-notify-feishu">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span style="font-size:13px;color:var(--text-secondary)">飞书通知（需配置飞书连接器）</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeModal('modal-alert-rule')">取消</button>
+                <button class="btn btn-primary" onclick="createAlertRule()">创建规则</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 添加分组模态框 -->
+    <div class="modal-overlay" id="modal-add-group" style="display:none">
+        <div class="modal" style="max-width:400px">
+            <div class="modal-header">
+                <h3>新建分组</h3>
+                <button class="btn-icon" onclick="closeModal('modal-add-group')">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>分组名称</label>
+                    <input type="text" class="form-input" id="group-name" placeholder="如：科技股、蓝筹股">
+                </div>
+                <div class="form-group">
+                    <label>颜色标识</label>
+                    <input type="color" id="group-color" value="#3b82f6" style="width:60px;height:36px;border:none;cursor:pointer">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeModal('modal-add-group')">取消</button>
+                <button class="btn btn-primary" onclick="createGroup()">创建</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 预警记录模态框 -->
+    <div class="modal-overlay" id="modal-alert-logs" style="display:none">
+        <div class="modal" style="max-width:640px">
+            <div class="modal-header">
+                <h3>预警记录</h3>
+                <button class="btn-icon" onclick="closeModal('modal-alert-logs')">✕</button>
+            </div>
+            <div class="modal-body" id="alert-logs-content" style="max-height:500px;overflow-y:auto">
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast 容器 -->
+    <div id="toast-container" style="position:fixed;top:20px;right:20px;z-index:2000"></div>
+
+    <!-- Alert Popup 容器 -->
+    <div id="alert-popup-container" style="position:fixed;bottom:20px;right:20px;z-index:1500"></div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
