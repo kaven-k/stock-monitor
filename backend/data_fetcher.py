@@ -114,7 +114,7 @@ def fetch_kline_mootdx(code, category=4, count=250):
     category: 4=日线, 5=周线, 6=月线
     """
     if not MOOTDX_AVAILABLE:
-        return fetch_kline_baidu(code, count)
+        return fetch_kline_baidu(code, category, count)
 
     global _tdx_client
     if _tdx_client is None:
@@ -122,7 +122,7 @@ def fetch_kline_mootdx(code, category=4, count=250):
             _tdx_client = Quotes.factory(market='std', timeout=10)
         except Exception as e:
             print(f"[ERROR] mootdx连接失败: {e}")
-            return fetch_kline_baidu(code, count)
+            return fetch_kline_baidu(code, category, count)
 
     try:
         market = 0 if code.startswith(("0", "3", "8")) else 1
@@ -144,15 +144,15 @@ def fetch_kline_mootdx(code, category=4, count=250):
         return result
     except Exception as e:
         print(f"[ERROR] mootdx K线请求失败: {e}")
-        return fetch_kline_baidu(code, count)
+        return fetch_kline_baidu(code, category, count)
 
 
-def fetch_kline_baidu(code, count=250):
+def fetch_kline_baidu(code, category=4, count=250):
     """
     通过腾讯财经/百度获取K线数据
-    优先使用腾讯财经 API (更稳定)
+    优先使用同花顺 API (更稳定)
     """
-    return _fetch_kline_tencent(code, count)
+    return _fetch_kline_tencent(code, category, count)
 
 
 def _get_tencent_code(code):
@@ -164,15 +164,21 @@ def _get_tencent_code(code):
     return code
 
 
-def _fetch_kline_tencent(code, count=250):
+def _fetch_kline_tencent(code, category=4, count=250):
     """通过同花顺获取K线数据"""
-    return _fetch_kline_10jqka(code, count)
+    return _fetch_kline_10jqka(code, category, count)
 
 
-def _fetch_kline_10jqka(code, count=250):
-    """通过同花顺 API 获取K线数据"""
-    pre = "sh" if code.startswith(("6", "9")) else "sz"
-    url = f"http://d.10jqka.com.cn/v2/line/hs_{code}/01/last.js"
+# 同花顺 period 映射: mootdx category → 同花顺路径码
+_CATEGORY_TO_10JQKA = {4: "01", 5: "02", 6: "03"}
+
+
+def _fetch_kline_10jqka(code, category=4, count=250):
+    """通过同花顺 API 获取K线数据 (支持日/周/月)"""
+    period_code = _CATEGORY_TO_10JQKA.get(category, "01")
+    
+    # 同花顺 URL 格式: /v2/line/hs_{code}/01/last.js  (01=日, 02=周, 03=月)
+    url = f"http://d.10jqka.com.cn/v2/line/hs_{code}/{period_code}/last.js"
     headers = {
         "User-Agent": UA,
         "Referer": "http://www.10jqka.com.cn/",
@@ -183,7 +189,7 @@ def _fetch_kline_10jqka(code, count=250):
         text = r.text
         
         # 解析 JSONP: quotebridge_v2_line_xxx_last({...})
-        prefix = f"quotebridge_v2_line_hs_{code}_01_last("
+        prefix = f"quotebridge_v2_line_hs_{code}_{period_code}_last("
         json_str = text
         if text.startswith(prefix):
             json_str = text[len(prefix):-1]  # Remove prefix and trailing )
@@ -229,8 +235,12 @@ def _get_eastmoney_code(code):
     return code
 
 
-def _fetch_kline_eastmoney(code, count=250):
-    """通过东方财富 API 获取K线 (备用)"""
+def _fetch_kline_eastmoney(code, category=4, count=250):
+    """通过东方财富 API 获取K线 (支持日/周/月)"""
+    # klt: 101=日线, 102=周线, 103=月线
+    klt_map = {4: "101", 5: "102", 6: "103"}
+    klt = klt_map.get(category, "101")
+    
     import requests as req
     secid = _get_eastmoney_code(code)
     url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
@@ -238,7 +248,7 @@ def _fetch_kline_eastmoney(code, count=250):
         "secid": secid,
         "fields1": "f1,f2,f3,f4,f5,f6",
         "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
-        "klt": "101",
+        "klt": klt,
         "fqt": "1",
         "end": "20500101",
         "lmt": count,
@@ -362,10 +372,32 @@ def _fetch_kline_baidu_fallback(code, count=250):
 
 
 def fetch_kline(code, period="day", count=250):
-    """统一的K线获取入口"""
+    """统一的K线获取入口, 支持 day/week/month"""
     category_map = {"day": 4, "week": 5, "month": 6}
     category = category_map.get(period, 4)
-    return fetch_kline_mootdx(code, category, count)
+    
+    # 1. 优先尝试 mootdx (所有周期)
+    if MOOTDX_AVAILABLE:
+        result = fetch_kline_mootdx(code, category, count)
+        if result:
+            return result
+    
+    # 2. 尝试东方财富 (push2his 支持日/周/月, 本环境可用)
+    result = _fetch_kline_eastmoney(code, category, count)
+    if result:
+        return result
+    
+    # 3. 使用同花顺 (仅日线)
+    if category == 4:
+        result = _fetch_kline_10jqka(code, category, count)
+        if result:
+            return result
+    
+    # 4. 最后尝试 mootdx 降级 (日线)
+    if MOOTDX_AVAILABLE:
+        return fetch_kline_mootdx(code, 4, count)
+    
+    return []
 
 
 # ============ 技术指标计算 ============

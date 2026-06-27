@@ -66,6 +66,10 @@
                         <span>规则管理</span>
                         <span class="count" id="nav-rules-count" style="background:var(--bg-hover);color:var(--text-muted)">0</span>
                     </div>
+                    <div class="sidebar-section-title" style="margin-top:8px">市场分析</div>
+                    <div class="sidebar-item" data-view="market">
+                        <span>📊 市场概览</span>
+                    </div>
                 </div>
                 <div class="sidebar-section">
                     <div class="sidebar-section-title">
@@ -98,6 +102,7 @@
                     <span class="top-bar-title" id="view-title">全部股票</span>
                 </div>
                 <div class="top-bar-right">
+                    <button class="theme-toggle" onclick="toggleTheme()" title="切换深色/浅色模式" id="theme-toggle-btn">🌙</button>
                     <button class="btn btn-sm" onclick="showAddStockModal()">+ 添加股票</button>
                     <button class="btn btn-sm" onclick="showAlertRuleModal()">+ 预警规则</button>
                     <button class="btn btn-sm" id="btn-monitor-toggle" onclick="toggleMonitor()">⏸ 暂停监控</button>
@@ -162,6 +167,62 @@
                         <button class="btn btn-primary btn-sm" onclick="showAlertRuleModal()">+ 新建规则</button>
                     </div>
                     <div class="stock-table-wrapper" id="rules-table-wrapper"></div>
+                </div>
+
+                <!-- 市场概览面板 -->
+                <div class="stock-panel" id="market-panel" style="display:none">
+                    <div style="padding:16px 20px;overflow-y:auto;height:100%">
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+                            <div style="background:var(--bg-tertiary);border-radius:var(--radius);padding:16px">
+                                <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">恐慌贪婪指数</div>
+                                <div style="display:flex;align-items:center;gap:16px">
+                                    <div style="font-size:36px;font-weight:700" id="sent-score">--</div>
+                                    <div style="font-size:14px;font-weight:600" id="sent-level"></div>
+                                </div>
+                                <div style="margin-top:8px;background:#e9ecef;border-radius:4px;height:8px;overflow:hidden">
+                                    <div id="sent-bar" style="height:100%;width:50%;background:var(--primary);border-radius:4px;transition:width 0.5s"></div>
+                                </div>
+                                <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-top:4px">
+                                    <span>0 恐慌</span><span>50 中性</span><span>100 贪婪</span>
+                                </div>
+                            </div>
+                            <div style="background:var(--bg-tertiary);border-radius:var(--radius);padding:16px">
+                                <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">涨跌分布</div>
+                                <div style="display:flex;gap:8px;margin-bottom:8px" id="breadth-stats">
+                                    <div style="flex:1;text-align:center"><div style="font-size:10px;color:var(--color-up)">上涨</div><div style="font-weight:700;color:var(--color-up)" id="up-count">--</div></div>
+                                    <div style="flex:1;text-align:center"><div style="font-size:10px;color:var(--color-down)">下跌</div><div style="font-weight:700;color:var(--color-down)" id="down-count">--</div></div>
+                                    <div style="flex:1;text-align:center"><div style="font-size:10px;color:var(--text-muted)">平盘</div><div style="font-weight:700" id="flat-count">--</div></div>
+                                </div>
+                                <div style="font-size:11px;color:var(--text-muted)">涨跌比: <b id="up-ratio">--</b></div>
+                                <div style="font-size:11px;color:var(--text-muted);margin-top:4px">涨停: <b style="color:var(--color-up)" id="limit-up">--</b> 跌停: <b style="color:var(--color-down)" id="limit-down">--</b></div>
+                            </div>
+                        </div>
+                        <div id="market-advice" style="background:var(--bg-tertiary);border-radius:var(--radius);padding:12px 16px;margin-bottom:16px;font-size:13px"></div>
+                        <div style="display:flex;gap:12px;margin-bottom:16px" id="indices-row">
+                            <div style="flex:1;background:var(--bg-tertiary);border-radius:var(--radius);padding:10px;text-align:center"><div style="font-size:10px;color:var(--text-muted)">上证指数</div><div style="font-weight:700;font-size:16px" id="idx-sh-price">--</div><div style="font-size:11px" id="idx-sh-change">--</div></div>
+                            <div style="flex:1;background:var(--bg-tertiary);border-radius:var(--radius);padding:10px;text-align:center"><div style="font-size:10px;color:var(--text-muted)">深证成指</div><div style="font-weight:700;font-size:16px" id="idx-sz-price">--</div><div style="font-size:11px" id="idx-sz-change">--</div></div>
+                            <div style="flex:1;background:var(--bg-tertiary);border-radius:var(--radius);padding:10px;text-align:center"><div style="font-size:10px;color:var(--text-muted)">创业板指</div><div style="font-weight:700;font-size:16px" id="idx-cy-price">--</div><div style="font-size:11px" id="idx-cy-change">--</div></div>
+                        </div>
+                        <div style="font-size:10px;color:var(--text-muted);margin-bottom:8px;text-align:right" id="market-source"></div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+                            <div>
+                                <div style="font-size:13px;font-weight:600;margin-bottom:8px">🏭 行业涨幅榜 <span style="font-size:10px;color:var(--text-muted);font-weight:400">全市场</span></div>
+                                <div id="industry-ranking" style="font-size:12px;color:var(--text-muted)">加载中...</div>
+                            </div>
+                            <div>
+                                <div style="font-size:13px;font-weight:600;margin-bottom:8px">💡 概念涨幅榜 <span style="font-size:10px;color:var(--text-muted);font-weight:400">全市场</span></div>
+                                <div id="concept-ranking" style="font-size:12px;color:var(--text-muted)">加载中...</div>
+                            </div>
+                        </div>
+                        <div style="margin-top:16px;border-top:1px solid var(--border-light);padding-top:12px">
+                            <div style="font-size:13px;font-weight:600;margin-bottom:8px">🔥 主线板块</div>
+                            <div id="main-sectors" style="font-size:12px;color:var(--text-muted)">加载中...</div>
+                        </div>
+                        <div style="margin-top:12px;border-top:1px solid var(--border-light);padding-top:12px">
+                            <div style="font-size:13px;font-weight:600;margin-bottom:8px">💰 板块资金流向 TOP10</div>
+                            <div id="fund-flow-top" style="font-size:12px;color:var(--text-muted)">加载中...</div>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="detail-panel collapsed" id="detail-panel">

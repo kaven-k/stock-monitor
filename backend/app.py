@@ -116,6 +116,7 @@ def exec_loop_with_socketio(sio):
     alert_engine = AlertEngine(db_module)
     last_quotes = {}
     last_fs_notify = {}  # 防重复通知: {rule_id_stock_code: 上次通知时间}
+    alert_cooldown = {}  # 预警去重: {rule_id_code: (上次价格, 上次时间)}，价格变化超阈值才重新触发
     
     print("[Monitor] 监控循环启动 (已关联监控状态 + 飞书通知)")
     
@@ -143,19 +144,32 @@ def exec_loop_with_socketio(sio):
                     ))
                 save_snapshots(snapshots)
                 
-                # 检查预警（所有已启用规则）
+                # 检查预警（所有已启用规则），带价格变化去重
                 triggered = alert_engine.check_all_rules(quotes)
+                deduped = []
                 for t in triggered:
                     rule_id, rule_name, code, stock_name, alert_type, alert_msg = t
+                    cd_key = f"{rule_id}_{code}"
+                    q = quotes.get(code, {})
+                    current_price = q.get('price', 0)
+                    
+                    # 去重逻辑：同一规则+股票，只有价格变化超过0.5%或超过10分钟才重新触发
+                    if cd_key in alert_cooldown:
+                        last_price, last_time = alert_cooldown[cd_key]
+                        price_change = abs(current_price - last_price) / max(last_price, 0.01) if last_price > 0 else 1
+                        if price_change < 0.005 and time.time() - last_time < 600:
+                            continue  # 价格基本未变且未超10分钟，跳过
+                    
+                    alert_cooldown[cd_key] = (current_price, time.time())
+                    deduped.append(t)
                     add_alert_log(rule_id, rule_name, code, stock_name, alert_type, alert_msg)
                     print(f"[Alert] {alert_msg}")
                     
-                    # 飞书通知：检查该规则是否启用飞书通知，防重复(5分钟内同一规则+股票不重复)
+                    # 飞书通知：检查该规则是否启用飞书通知
                     feishu_key = f"{rule_id}_{code}"
                     last_time = last_fs_notify.get(feishu_key, 0)
                     if time.time() - last_time > 180:  # 3分钟防重复
                         try:
-                            # 获取规则详情检查 notify_feishu
                             rule = db_module.get_alert_rule_by_id(rule_id)
                             if rule and rule.get('notify_feishu'):
                                 feishu_notify.send_stock_alert(
@@ -172,14 +186,14 @@ def exec_loop_with_socketio(sio):
                         'time': now.strftime('%H:%M:%S'),
                         'timestamp': ts,
                     })
-                    if triggered:
+                    if deduped:
                         sio.emit('alerts_new', {
-                            'count': len(triggered),
+                            'count': len(deduped),
                             'alerts': [{
                                 'rule_name': t[1], 'stock_code': t[2],
                                 'stock_name': t[3], 'type': t[4],
                                 'msg': t[5], 'time': ts,
-                            } for t in triggered],
+                            } for t in deduped],
                         })
                 except Exception as e:
                     print(f"[SocketIO Error] {e}")

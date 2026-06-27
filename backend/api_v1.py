@@ -316,30 +316,20 @@ def get_kline(code):
     period = request.args.get('period', 'day')
     count = request.args.get('count', 250, type=int)
     
-    # 优先从数据库读取（缓存命中要求: 至少有 count 条或至少20条）
-    hist = db.get_price_history(code, count)
-    if hist and len(hist) >= min(count, 20):
-        indicators = get_technical_indicators(hist)
-        return success({"kline": hist, "indicators": indicators, "source": "db"})
+    # 日线优先从数据库缓存读取，周/月线直接走API
+    if period == 'day':
+        hist = db.get_price_history(code, count)
+        if hist and len(hist) >= min(count, 20):
+            # 统一字段名: trade_date → date
+            for h in hist:
+                if "trade_date" in h:
+                    h["date"] = h.pop("trade_date")
+            indicators = get_technical_indicators(hist)
+            return success({"kline": hist, "indicators": indicators, "source": "db"})
     
     # 从API获取
     kline = fetch_kline(code, period, count)
     if kline:
-        # 保存到数据库缓存
-        try:
-            records = []
-            for item in kline:
-                records.append((
-                    code, item.get("date", ""),
-                    item.get("open", 0), item.get("high", 0),
-                    item.get("low", 0), item.get("close", 0),
-                    item.get("volume", 0), item.get("amount", 0),
-                    item.get("change_pct", 0),
-                ))
-            db.save_price_history(records)
-        except Exception as e:
-            print(f"[Kline Cache] 保存失败: {e}")
-        
         indicators = get_technical_indicators(kline)
         return success({"kline": kline, "indicators": indicators, "source": "api"})
     
@@ -397,6 +387,95 @@ def monitor_interval():
     import config
     config.REFRESH_INTERVAL = new_interval
     return success({"interval": new_interval}, f"刷新间隔已设置为 {new_interval}s")
+
+
+# ============ 辅助函数 ============
+
+def _get_monitor_data():
+    """获取当前监控股票列表和行情数据（供情绪API共用）"""
+    stocks = db.get_all_stocks()
+    codes = [s['code'] for s in stocks]
+    quotes = {}
+    if codes:
+        quotes = fetch_tencent_quotes(codes)
+    return stocks, quotes
+
+
+# ============ 板块分析 ============
+
+@api_v1.route('/sector/ranking', methods=['GET'])
+@login_required
+def sector_ranking():
+    """获取全市场板块排行（基于东财实时数据）"""
+    sector_type = request.args.get('type', 'all')  # industry | concept | all
+    top_n = request.args.get('top_n', 10, type=int)
+    from sector_analysis import get_sector_ranking
+    result = get_sector_ranking(sector_type, top_n)
+    return success(result)
+
+
+@api_v1.route('/sector/main', methods=['GET'])
+@login_required
+def sector_main():
+    """获取主线板块"""
+    days = request.args.get('days', 5, type=int)
+    top_n = request.args.get('top_n', 10, type=int)
+    from sector_analysis import get_main_sectors
+    result = get_main_sectors(days, top_n)
+    return success(result)
+
+
+@api_v1.route('/sector/<sector_code>/detail', methods=['GET'])
+@login_required
+def sector_detail(sector_code):
+    """获取板块详情（成份股）"""
+    from sector_analysis import get_sector_detail
+    result = get_sector_detail(sector_code)
+    return success(result)
+
+
+# ============ 资金流向 ============
+
+@api_v1.route('/fund/sector', methods=['GET'])
+@login_required
+def fund_sector():
+    """全市场板块资金流向"""
+    sector_type = request.args.get('type', 'all')  # industry | concept | all
+    top_n = request.args.get('top_n', 20, type=int)
+    from fund_flow import get_sector_fund_flow
+    result = get_sector_fund_flow(sector_type, top_n)
+    return success(result)
+
+
+@api_v1.route('/fund/northbound', methods=['GET'])
+@login_required
+def fund_northbound():
+    """北向资金"""
+    from fund_flow import get_northbound_flow
+    result = get_northbound_flow()
+    return success(result)
+
+
+# ============ 市场情绪 ============
+
+@api_v1.route('/sentiment', methods=['GET'])
+@login_required
+def sentiment_index():
+    """市场情绪指标 - 综合全市场数据"""
+    _, quotes = _get_monitor_data()
+    from market_sentiment import get_sentiment_index
+    result = get_sentiment_index(quotes)
+    return success(result)
+
+
+@api_v1.route('/sentiment/thermometer', methods=['GET'])
+@login_required
+def sentiment_thermometer():
+    """市场温度计（综合）- 含三大指数 + 情绪 + 涨跌比"""
+    _, quotes = _get_monitor_data()
+    from market_sentiment import get_market_thermometer
+    result = get_market_thermometer(quotes)
+    return success(result)
 
 
 # ============ 接口列表 ============

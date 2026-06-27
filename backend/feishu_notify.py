@@ -3,15 +3,19 @@
 使用飞书开放平台 API 发送消息通知
 - 获取 tenant_access_token
 - 发送文本消息到指定用户
+
+配置方式：在 .env 文件中设置以下环境变量：
+  FEISHU_APP_ID=xxx
+  FEISHU_APP_SECRET=xxx
+  FEISHU_USER_ID=xxx
 """
+import os
 import time
 import requests
 import threading
 
-# 飞书应用配置
-FEISHU_APP_ID = "cli_a940302afa78dcee"
-FEISHU_APP_SECRET = "YOUR_FEISHU_SECRET_HERE"
-FEISHU_USER_ID = "ou_3e92a0d2356df4ed2afd613bdc60d4a3"
+# 从 config 模块加载（config.py 会自动加载 .env 文件）
+from config import FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_USER_ID
 
 # Token 缓存
 _token_cache = {

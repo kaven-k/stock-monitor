@@ -21,13 +21,48 @@ const State = {
     detailTab: 'chart',
     klineData: null,
     user: null,
+    priceSparkline: {},  // {code: [最近5次change_pct]}
 };
 
 let socket = null;
 let countdownTimer = null;  // 倒计时定时器
 
+// ====== 主题管理 ======
+function initTheme() {
+    const saved = localStorage.getItem('stockmonitor-theme') || 'light';
+    applyTheme(saved);
+}
+function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme') || 'light';
+    const next = current === 'dark' ? 'light' : 'dark';
+    applyTheme(next);
+    localStorage.setItem('stockmonitor-theme', next);
+}
+function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    const btn = document.getElementById('theme-toggle-btn');
+    if (btn) btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+    // 刷新所有活跃的 ECharts 图表
+    if (typeof Charts !== 'undefined' && Charts.refreshAllThemes) {
+        Charts.refreshAllThemes();
+    }
+}
+
 // ====== 入口 ======
 document.addEventListener('DOMContentLoaded', async () => {
+    initTheme();
+    
+    // 事件委托：K线周期按钮 (动态HTML, 用委托监听)
+    const detailContent = document.getElementById('detail-content');
+    if (detailContent) {
+        detailContent.addEventListener('click', e => {
+            const btn = e.target.closest('.kline-period-btn');
+            if (btn && btn.dataset.period) {
+                changeKlinePeriod(btn.dataset.period);
+            }
+        });
+    }
+    
     // 检查是否已登录
     if (api.token) {
         try {
@@ -191,11 +226,17 @@ function initSocket() {
     socket.on('quotes_update', data => {
         if (data.data) {
             State.quotes = { ...State.quotes, ...data.data };
+            // 更新 sparkline 历史数据 (保留最近5次)
+            Object.entries(data.data).forEach(([code, q]) => {
+                if (!State.priceSparkline[code]) State.priceSparkline[code] = [];
+                State.priceSparkline[code].push(q.change_pct || 0);
+                if (State.priceSparkline[code].length > 5) State.priceSparkline[code].shift();
+            });
             document.getElementById('last-update-time').textContent = `数据更新: ${data.time}`;
             document.getElementById('status-time').textContent = data.time;
             renderStockTable();
             if (State.selectedStock && !document.getElementById('detail-panel').classList.contains('collapsed')) {
-                updateDetailPanel();
+                refreshDetailPrices();  // 仅刷新数字，不重建图表
             }
         }
     });
@@ -298,7 +339,7 @@ function renderStockTable() {
             <td><span class="stock-name">${s.name}</span> <span class="stock-code">${s.code}</span></td>
             <td style="max-width:140px;overflow:hidden">${tagsHtml}</td>
             <td style="${pc};font-weight:600">${q.price.toFixed(2)}</td>
-            <td class="${cc}" style="font-weight:600">${sign}${q.change_pct.toFixed(2)}%</td>
+            <td class="${cc}" style="font-weight:600;min-width:90px">${sign}${q.change_pct.toFixed(2)}%${renderSparkline(s.code)}</td>
             <td>${q.open.toFixed(2)}</td>
             <td style="color:var(--color-up)">${q.high.toFixed(2)}</td>
             <td style="color:var(--color-down)">${q.low.toFixed(2)}</td>
@@ -406,17 +447,38 @@ async function deleteStock(code) {
 }
 
 // ====== 详情面板 ======
+State.klinePeriod = 'day';  // 当前K线周期
+
 async function selectStock(code) {
     State.selectedStock = code;
     State.klineData = null;
+    State.klinePeriod = 'day';
     document.getElementById('detail-panel').classList.remove('collapsed');
     updateDetailPanel();
     try {
-        State.klineData = await api.getKline(code);
+        State.klineData = await api.getKline(code, State.klinePeriod);
         if (State.detailTab === 'chart') renderKlineChart();
         else if (State.detailTab === 'indicator') renderIndicatorCharts();
     } catch (e) { console.error(e); }
     renderStockTable();
+}
+
+async function changeKlinePeriod(period) {
+    if (State.klinePeriod === period) return;
+    State.klinePeriod = period;
+    State.klineData = null;
+    
+    // 更新按钮状态
+    document.querySelectorAll('.kline-period-btn').forEach(b => {
+        b.classList.toggle('active', b.dataset.period === period);
+    });
+    
+    const code = State.selectedStock;
+    if (!code) return;
+    try {
+        State.klineData = await api.getKline(code, period);
+        renderKlineChart();
+    } catch (e) { console.error(e); }
 }
 
 function closeDetail() {
@@ -431,6 +493,7 @@ function updateDetailPanel() {
     if (!State.selectedStock) return;
     const code = State.selectedStock;
     const q = State.quotes[code];
+    if (!q) return;
     const stock = State.stocks.find(s => s.code === code);
     const name = q?.name || stock?.name || code;
 
@@ -438,12 +501,20 @@ function updateDetailPanel() {
     document.getElementById('detail-code').textContent = code;
 
     const container = document.getElementById('detail-content');
-    if (!container || !q) return;
+    if (!container) return;
 
-    const cc = q.change_pct > 0 ? 'change-up' : (q.change_pct < 0 ? 'change-down' : 'change-flat');
-    const sign = q.change_pct > 0 ? '+' : '';
+    // 标题栏名称
+    document.getElementById('detail-name').textContent = name;
+    document.getElementById('detail-code').textContent = code;
+
+    const container = document.getElementById('detail-content');
+    if (!container) return;
+
     const pc = q.change_pct > 0 ? 'var(--color-up)' : (q.change_pct < 0 ? 'var(--color-down)' : 'var(--text-primary)');
+    const sign = q.change_pct > 0 ? '+' : '';
+    const cc = q.change_pct > 0 ? 'change-up' : (q.change_pct < 0 ? 'change-down' : 'change-flat');
 
+    // 价格卡片（updateDetailPanel 会重建，refreshDetailPrices 只更新文本）
     let html = `<div class="price-card">
         <div class="price-main"><span class="price-value" style="color:${pc}">${q.price.toFixed(2)}</span><span class="price-change ${cc}">${sign}${q.change_pct.toFixed(2)}%</span></div>
         <div class="price-stats">
@@ -457,9 +528,16 @@ function updateDetailPanel() {
             <div class="stat-item"><div class="stat-label">PB</div><div class="stat-value">${q.pb > 0 ? q.pb.toFixed(2) : '--'}</div></div>
             <div class="stat-item"><div class="stat-label">市值</div><div class="stat-value">${q.mcap_yi > 0 ? (q.mcap_yi >= 10000 ? (q.mcap_yi/10000).toFixed(2)+'万亿' : q.mcap_yi.toFixed(0)+'亿') : '--'}</div></div>
         </div></div>`;
-
     if (State.detailTab === 'chart') {
-        html += '<div class="chart-container" id="kline-chart"></div><div class="indicator-legend"><div class="legend-item"><div class="legend-line" style="background:#e03131"></div>MA5</div><div class="legend-item"><div class="legend-line" style="background:#f59e0b"></div>MA10</div><div class="legend-item"><div class="legend-line" style="background:#6366f1"></div>MA20</div><div class="legend-item"><div class="legend-line" style="background:#10b981"></div>MA60</div></div><div id="ma-signals"></div>';
+        const p = State.klinePeriod || 'day';
+        html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px">' +
+            '<span style="font-size:11px;color:var(--text-muted)">周期:</span>' +
+            `<button class="kline-period-btn${p === 'day' ? ' active' : ''}" data-period="day">日K</button>` +
+            `<button class="kline-period-btn${p === 'week' ? ' active' : ''}" data-period="week">周K</button>` +
+            `<button class="kline-period-btn${p === 'month' ? ' active' : ''}" data-period="month">月K</button>` +
+            '<span style="font-size:10px;color:var(--text-muted);margin-left:auto">MACD内嵌</span></div>';
+        html += '<div class="chart-container" id="kline-chart" style="height:420px"></div>';
+        html += '<div class="indicator-legend"><div class="legend-item"><div class="legend-line" style="background:var(--color-up)"></div>MA5</div><div class="legend-item"><div class="legend-line" style="background:#6366f1"></div>MA20</div><div class="legend-item"><div class="legend-line" style="background:#a78bfa"></div>BOLL</div><div class="legend-item"><div class="legend-line" style="background:var(--color-up)"></div>MACD</div></div><div id="ma-signals"></div>';
     } else if (State.detailTab === 'indicator') {
         html += '<div class="chart-container" id="rsi-chart"></div><div class="chart-container" id="macd-chart"></div><div class="chart-container" id="kdj-chart"></div>';
     } else {
@@ -477,6 +555,68 @@ function updateDetailPanel() {
     }
 }
 
+/** 仅刷新详情面板价格数字，不重建图表（行情推送时调用） */
+function refreshDetailPrices() {
+    if (!State.selectedStock) return;
+    const code = State.selectedStock;
+    const q = State.quotes[code];
+    if (!q) return;
+
+    const stock = State.stocks.find(s => s.code === code);
+    const name = q?.name || stock?.name || code;
+    document.getElementById('detail-name').textContent = name;
+    document.getElementById('detail-code').textContent = code;
+    buildDetailHeader(q);
+
+    // 仅在信息Tab时刷新（因为没图表，直接reconstruct安全）
+    if (State.detailTab === 'info') {
+        const container = document.getElementById('detail-content');
+        if (container) {
+            container.innerHTML = `<div style="padding:8px 0">
+                <div class="form-group"><label>涨停价</label><span style="font-weight:600;color:var(--color-up)">${q.limit_up.toFixed(2)}</span></div>
+                <div class="form-group"><label>跌停价</label><span style="font-weight:600;color:var(--color-down)">${q.limit_down.toFixed(2)}</span></div>
+                <div class="form-group"><label>量比</label><span>${(q.vol_ratio || 0).toFixed(2)}</span></div>
+                <div class="form-group"><label>振幅</label><span>${(q.amplitude_pct || 0).toFixed(2)}%</span></div>
+            </div>`;
+        }
+    }
+}
+
+/** 构建详情面板标题栏价格卡片 */
+function buildDetailHeader(q) {
+    const pc = q.change_pct > 0 ? 'var(--color-up)' : (q.change_pct < 0 ? 'var(--color-down)' : 'var(--text-primary)');
+    const sign = q.change_pct > 0 ? '+' : '';
+    const cc = q.change_pct > 0 ? 'change-up' : (q.change_pct < 0 ? 'change-down' : 'change-flat');
+
+    // 用 price-card 容器如果已存在则复用，否则创建
+    let card = document.querySelector('.price-card');
+    if (!card) {
+        // 首次创建时 updateDetailPanel 会生成，此后 refreshDetailPrices 直接更新已有DOM
+        return;
+    }
+    card.querySelector('.price-value').style.color = pc;
+    card.querySelector('.price-value').textContent = q.price.toFixed(2);
+    const chgEl = card.querySelector('.price-change');
+    chgEl.textContent = sign + q.change_pct.toFixed(2) + '%';
+    chgEl.className = 'price-change ' + cc;
+
+    // 更新统计项
+    const stats = card.querySelectorAll('.stat-value');
+    if (stats.length >= 9) {
+        stats[0].textContent = q.open.toFixed(2);
+        stats[1].textContent = q.high.toFixed(2);
+        stats[1].style.color = 'var(--color-up)';
+        stats[2].textContent = q.low.toFixed(2);
+        stats[2].style.color = 'var(--color-down)';
+        stats[3].textContent = Charts.formatVol(q.volume);
+        stats[4].textContent = Charts.formatAmt(q.amount_wan);
+        stats[5].textContent = q.turnover_pct.toFixed(2) + '%';
+        stats[6].textContent = q.pe_ttm > 0 ? q.pe_ttm.toFixed(1) : '--';
+        stats[7].textContent = q.pb > 0 ? q.pb.toFixed(2) : '--';
+        stats[8].textContent = q.mcap_yi > 0 ? (q.mcap_yi >= 10000 ? (q.mcap_yi/10000).toFixed(2)+'万亿' : q.mcap_yi.toFixed(0)+'亿') : '--';
+    }
+}
+
 function switchDetailTab(tab, el) {
     State.detailTab = tab;
     document.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
@@ -487,20 +627,20 @@ function switchDetailTab(tab, el) {
 function renderKlineChart() {
     const d = State.klineData;
     if (!d?.kline) return;
-    Charts.renderKline('kline-chart', d.kline, d.indicators || {});
+    Charts.renderKline('kline-chart', d.kline, d.indicators || {}, State.klinePeriod || 'day');
     
     // MA 买卖信号分析
     const analysis = Charts.analyzeMA(d.kline, d.indicators || {});
     const signalEl = document.getElementById('ma-signals');
     if (signalEl && analysis) {
         signalEl.innerHTML = `
-            <div style="padding:12px 16px;border-radius:8px;margin:8px 0;background:${analysis.suggestion.color === '#e03131' ? '#fff5f5' : analysis.suggestion.color === '#2f9e44' ? '#f0fff4' : '#f8f9fa'};border:1px solid ${analysis.suggestion.color}20">
+            <div style="padding:12px 16px;border-radius:8px;margin:8px 0;background:${analysis.suggestion.color === '#e03131' || analysis.suggestion.color === '#ef4444' ? 'var(--bg-tertiary)' : 'var(--bg-tertiary)'};border:1px solid ${analysis.suggestion.color}30">
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
                     <span style="font-weight:700;font-size:15px;color:${analysis.suggestion.color}">${analysis.suggestion.text}</span>
                     <span style="font-size:12px;color:var(--text-muted)">${analysis.suggestion.desc}</span>
                 </div>
                 ${analysis.signals.map(s => `<div style="display:flex;align-items:center;gap:6px;margin:4px 0;font-size:12px">
-                    <span style="color:${s.type === 'bullish' ? '#e03131' : s.type === 'bearish' ? '#2f9e44' : '#868e96'}">${s.type === 'bullish' ? '▲' : s.type === 'bearish' ? '▼' : '◆'}</span>
+                    <span style="color:${s.type === 'bullish' ? 'var(--color-up)' : s.type === 'bearish' ? 'var(--color-down)' : 'var(--text-muted)'}">${s.type === 'bullish' ? '▲' : s.type === 'bearish' ? '▼' : '◆'}</span>
                     <span style="color:var(--text-secondary)">${s.text}</span>
                 </div>`).join('')}
             </div>`;
@@ -692,6 +832,7 @@ function showAlertPopup(alerts) {
 function showStockView() {
     document.getElementById('stock-panel').style.display = '';
     document.getElementById('rules-panel').style.display = 'none';
+    document.getElementById('market-panel').style.display = 'none';
     document.getElementById('toolbar-stock').style.display = '';
 }
 
@@ -725,6 +866,7 @@ async function showRulesView() {
     document.getElementById('view-title').textContent = '规则管理';
     document.getElementById('stock-panel').style.display = 'none';
     document.getElementById('rules-panel').style.display = '';
+    document.getElementById('market-panel').style.display = 'none';
     document.getElementById('toolbar-stock').style.display = 'none';
     await loadRulesView();
 }
@@ -936,6 +1078,150 @@ function resetAlertRuleModal() {
     }
 }
 
+// ====== 市场概览 ======
+async function showMarketView() {
+    closeDetail();
+    State.currentView = 'market';
+    document.getElementById('view-title').textContent = '市场概览';
+    document.getElementById('stock-panel').style.display = 'none';
+    document.getElementById('rules-panel').style.display = 'none';
+    document.getElementById('market-panel').style.display = '';
+    document.getElementById('toolbar-stock').style.display = 'none';
+    await loadMarketData();
+}
+
+async function loadMarketData() {
+    try {
+        // 1. 获取市场温度计（情绪 + 涨跌 + 指数）
+        const thermo = await api.get('/sentiment/thermometer');
+        if (thermo.code === 0) {
+            const d = thermo.data;
+            const s = d.sentiment || {};
+            
+            // 情绪指数
+            document.getElementById('sent-score').textContent = s.score != null ? s.score : '--';
+            document.getElementById('sent-score').style.color = s.level_color || 'var(--text-primary)';
+            document.getElementById('sent-level').textContent = s.level_text || '--';
+            document.getElementById('sent-level').style.color = s.level_color || 'var(--text-primary)';
+            document.getElementById('sent-bar').style.width = (s.score || 50) + '%';
+            document.getElementById('sent-bar').style.background = s.level_color || 'var(--primary)';
+            
+            if (s.factors && s.factors.length > 0) {
+                const factorTips = s.factors.map(f => f.name + ': ' + f.value + ' (' + f.score + '分 权重' + f.weight + '%)').join('\n');
+                document.getElementById('sent-score').title = factorTips;
+            }
+            
+            // 涨跌分布
+            if (d.breadth) {
+                document.getElementById('up-count').textContent = d.breadth.up_count || 0;
+                document.getElementById('down-count').textContent = d.breadth.down_count || 0;
+                document.getElementById('flat-count').textContent = d.breadth.flat_count || 0;
+                document.getElementById('up-ratio').textContent = (d.breadth.up_ratio || 0) + '%';
+            }
+            
+            // 涨跌停
+            if (d.limit) {
+                document.getElementById('limit-up').textContent = d.limit.limit_up || 0;
+                document.getElementById('limit-down').textContent = d.limit.limit_down || 0;
+            }
+            
+            // 指数数据
+            if (d.indices) {
+                const idx = d.indices;
+                const setIdx = (idPrice, idChange, data) => {
+                    if (data && data.price) {
+                        document.getElementById(idPrice).textContent = data.price.toFixed(0);
+                        const chgEl = document.getElementById(idChange);
+                        const sign = data.change_pct >= 0 ? '+' : '';
+                        chgEl.textContent = sign + data.change_pct.toFixed(2) + '%';
+                        chgEl.style.color = data.change_pct >= 0 ? 'var(--color-up)' : 'var(--color-down)';
+                    }
+                };
+                setIdx('idx-sh-price', 'idx-sh-change', idx.sh);
+                setIdx('idx-sz-price', 'idx-sz-change', idx.sz);
+                setIdx('idx-cy-price', 'idx-cy-change', idx.cy);
+            }
+            
+            // 投资建议
+            const advice = d.advice || '';
+            document.getElementById('market-advice').innerHTML = '<div style="display:flex;align-items:center;gap:8px"><span style="font-size:20px">📊</span><span>' + advice + '</span></div>';
+            document.getElementById('market-advice').style.background = '#f8f9fa';
+            
+            // 数据来源
+            document.getElementById('market-source').textContent = '数据来源: 东方财富 | ' + (d.time || '');
+        }
+
+        // 2. 行业板块排名
+        renderSectorRanking('industry-ranking', 'industry');
+        
+        // 3. 概念板块排名
+        renderSectorRanking('concept-ranking', 'concept');
+        
+        // 4. 主线板块
+        try {
+            const mainRes = await api.get('/sector/main?top_n=5');
+            if (mainRes.code === 0) {
+                const m = mainRes.data;
+                const indItems = (m.industry_main || []).slice(0, 3);
+                const conItems = (m.concept_main || []).slice(0, 3);
+                const allMains = [...indItems, ...conItems].sort((a, b) => a.main_score - b.main_score).slice(0, 5);
+                
+                if (allMains.length > 0) {
+                    document.getElementById('main-sectors').innerHTML = allMains.map(r =>
+                        '<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border-light)">' +
+                        '<div><span style="font-weight:600">' + r.name + '</span><span style="font-size:10px;margin-left:4px;color:#f59e0b">' + (r.main_level || '') + '</span></div>' +
+                        '<div style="text-align:right"><span style="color:var(--color-up);font-weight:600">+' + r.change_pct + '%</span>' +
+                        '<div style="font-size:10px;color:var(--text-muted)">资金+' + r.fund_flow_yi.toFixed(1) + '亿</div></div></div>'
+                    ).join('');
+                } else {
+                    document.getElementById('main-sectors').innerHTML = '<span style="color:var(--text-muted)">暂无符合条件的主线板块</span>';
+                }
+            }
+        } catch(e) {
+            document.getElementById('main-sectors').innerHTML = '<span style="color:var(--text-muted)">加载中...</span>';
+        }
+        
+        // 5. 资金流向 TOP10
+        try {
+            const fundRes = await api.get('/fund/sector?type=all&top_n=10');
+            if (fundRes.code === 0 && fundRes.data.top_inflow && fundRes.data.top_inflow.length > 0) {
+                document.getElementById('fund-flow-top').innerHTML = fundRes.data.top_inflow.slice(0, 10).map(r =>
+                    '<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid var(--border-light)">' +
+                    '<span style="font-weight:600">' + r.name + '</span>' +
+                    '<div style="text-align:right"><span style="color:' + (r.net_flow_yi >= 0 ? 'var(--color-up)' : 'var(--color-down)') + ';font-weight:600">' + r.net_flow_str + '</span>' +
+                    '<span style="font-size:10px;color:var(--text-muted);margin-left:6px">' + (r.change_pct >= 0 ? '+' : '') + r.change_pct + '%</span></div></div>'
+                ).join('');
+            } else {
+                document.getElementById('fund-flow-top').innerHTML = '<span style="color:var(--text-muted)">暂无数据</span>';
+            }
+        } catch(e) {
+            document.getElementById('fund-flow-top').innerHTML = '<span style="color:var(--text-muted)">加载中...</span>';
+        }
+    } catch(e) {
+        console.error('市场数据加载失败:', e);
+    }
+}
+
+async function renderSectorRanking(elementId, sectorType) {
+    try {
+        const res = await api.get('/sector/ranking?type=' + sectorType + '&top_n=10');
+        if (res.code === 0 && res.data.top && res.data.top.length > 0) {
+            document.getElementById(elementId).innerHTML = res.data.top.map(r =>
+                '<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border-light)">' +
+                '<div style="flex:1;min-width:0">' +
+                '<span style="font-weight:600">' + r.name + '</span>' +
+                '<div style="font-size:10px;color:var(--text-muted)">领涨:' + (r.leader_name || '--') + ' ' + (r.fund_flow_str || '') + '</div></div>' +
+                '<span style="color:' + (r.change_pct >= 0 ? 'var(--color-up)' : 'var(--color-down)') + ';font-weight:700;margin-left:8px">' + (r.change_pct >= 0 ? '+' : '') + r.change_pct + '%</span></div>'
+            ).join('');
+        } else {
+            document.getElementById(elementId).innerHTML = '<span style="color:var(--text-muted)">暂无数据，请检查网络</span>';
+        }
+    } catch(e) {
+        console.error('板块数据加载失败:', e);
+        document.getElementById(elementId).innerHTML = '<span style="color:var(--text-muted)">加载失败</span>';
+    }
+}
+
 // 侧边栏导航
 document.addEventListener('click', e => {
     const item = e.target.closest('.sidebar-item[data-view]');
@@ -946,6 +1232,7 @@ document.addEventListener('click', e => {
     if (view === 'all') { State.currentView = 'all'; State.currentGroupId = null; document.getElementById('view-title').textContent = '全部股票'; showStockView(); renderStockTable(); }
     else if (view === 'alerts') showAlertLogs();
     else if (view === 'rules') showRulesView();
+    else if (view === 'market') showMarketView();
 });
 
 // 退出
@@ -958,6 +1245,38 @@ async function doLogout() {
     if (socket) { socket.disconnect(); socket = null; }
     Charts.disposeAll();
     showLogin();
+}
+
+// ====== 迷你走势图（sparkline）======
+function renderSparkline(code) {
+    const history = State.priceSparkline[code];
+    if (!history || history.length < 2) return '';
+    
+    const w = 50, h = 16, pad = 2;
+    const min = Math.min(...history);
+    const max = Math.max(...history);
+    const range = (max - min) || 1;
+    
+    const points = history.map((v, i) => {
+        const x = pad + (i / (history.length - 1)) * (w - pad * 2);
+        const y = h - pad - ((v - min) / range) * (h - pad * 2);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+    
+    const color = history[history.length - 1] >= 0 ? 'var(--color-up)' : 'var(--color-down)';
+    const fillColor = history[history.length - 1] >= 0
+        ? (document.documentElement.getAttribute('data-theme') === 'dark' ? '#ef444422' : '#e0313122')
+        : (document.documentElement.getAttribute('data-theme') === 'dark' ? '#22c55e22' : '#2f9e4422');
+    
+    // 构建填充区域
+    const firstX = pad;
+    const lastX = w - pad;
+    const fillPoints = `${firstX},${h - pad} ${points} ${lastX},${h - pad}`;
+    
+    return `<svg width="${w}" height="${h}" style="vertical-align:middle;margin-left:4px" viewBox="0 0 ${w} ${h}">
+        <polygon points="${fillPoints}" fill="${fillColor}"/>
+        <polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`;
 }
 
 // 快捷键

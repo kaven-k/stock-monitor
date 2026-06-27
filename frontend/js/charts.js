@@ -1,60 +1,80 @@
 /**
- * StockMonitor - ECharts 图表组件
- * K线图 + 技术指标图表 (RSI/MACD/KDJ/BOLL)
+ * StockMonitor - ECharts 图表组件 v2.0
+ * K线图(日/周/月) + MACD子图 + BOLL布林带 + 技术指标
  */
+(function() {
+const isDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
+const colorUp = () => isDark() ? '#ef4444' : '#e03131';
+const colorDown = () => isDark() ? '#22c55e' : '#2f9e44';
+const textColor = () => isDark() ? '#9ca3af' : '#606770';
+const gridColor = () => isDark() ? '#27272a' : '#f0f0f0';
+const axisColor = () => isDark() ? '#3f3f46' : '#e0e0e0';
 
 const Charts = {
     instances: {},
+    _resizeHandlers: {},
 
     dispose(id) {
         if (this.instances[id]) {
+            if (this._resizeHandlers[id]) {
+                window.removeEventListener('resize', this._resizeHandlers[id]);
+                delete this._resizeHandlers[id];
+            }
             this.instances[id].dispose();
             delete this.instances[id];
         }
     },
 
     disposeAll() {
-        Object.keys(this.instances).forEach(id => {
-            this.instances[id].dispose();
+        Object.keys(this.instances).forEach(id => this.dispose(id));
+        Object.keys(this._resizeHandlers).forEach(k => {
+            window.removeEventListener('resize', this._resizeHandlers[k]);
         });
+        this._resizeHandlers = {};
         this.instances = {};
     },
 
-    renderKline(containerId, kline, indicators) {
+    _onResize(id) {
+        const handler = () => {
+            const inst = this.instances[id];
+            if (inst && !inst.isDisposed()) inst.resize();
+        };
+        this._resizeHandlers[id] = handler;
+        window.addEventListener('resize', handler);
+    },
+
+    renderKline(containerId, kline, indicators, period = 'day') {
         const container = document.getElementById(containerId);
         if (!container || !kline || kline.length === 0) return;
 
         this.dispose(containerId);
-        const chart = echarts.init(container);
+        const chart = echarts.init(container, isDark() ? 'dark' : undefined);
         this.instances[containerId] = chart;
 
         const dates = kline.map(d => d.date);
         const ohlc = kline.map(d => [d.open, d.close, d.low, d.high]);
         const volumes = kline.map(d => d.volume);
 
-        // 计算MA金叉/死叉标记点 (MA5 vs MA20)
         const ma5 = indicators.ma5 || [];
+        const ma10 = indicators.ma10 || [];
         const ma20 = indicators.ma20 || [];
-        const goldenCross = []; // 金叉点 (买入信号)
-        const deathCross = [];  // 死叉点 (卖出信号)
-        
+        const ma60 = indicators.ma60 || [];
+        const boll = indicators.boll || { upper: [], mid: [], lower: [] };
+
+        // 金叉/死叉
+        const goldenCross = [], deathCross = [];
         for (let i = 1; i < Math.min(ma5.length, ma20.length); i++) {
-            const prev5 = ma5[i-1], prev20 = ma20[i-1];
-            const curr5 = ma5[i], curr20 = ma20[i];
-            if (prev5 === null || prev20 === null || curr5 === null || curr20 === null) continue;
-            
-            // 金叉: MA5从下向上穿越MA20
-            if (prev5 <= prev20 && curr5 > curr20) {
-                goldenCross.push({ name: '金叉 ▲', coord: [dates[i], 'min'], value: '买入信号', symbol: 'triangle', symbolSize: 14, itemStyle: { color: '#e03131' }, label: { show: true, position: 'bottom', color: '#e03131', fontSize: 11, fontWeight: 'bold' } });
-            }
-            // 死叉: MA5从上向下跌破MA20
-            if (prev5 >= prev20 && curr5 < curr20) {
-                deathCross.push({ name: '死叉 ▼', coord: [dates[i], 'max'], value: '卖出信号', symbol: 'triangle', symbolSize: 14, symbolRotate: 180, itemStyle: { color: '#2f9e44' }, label: { show: true, position: 'top', color: '#2f9e44', fontSize: 11, fontWeight: 'bold' } });
-            }
+            const p5 = ma5[i-1], p20 = ma20[i-1], c5 = ma5[i], c20 = ma20[i];
+            if (p5 === null || p20 === null || c5 === null || c20 === null) continue;
+            if (p5 <= p20 && c5 > c20) goldenCross.push({ name: '金叉 ▲', coord: [dates[i], 'min'], value: '买入', symbol: 'triangle', symbolSize: 14, itemStyle: { color: colorUp() }, label: { show: true, position: 'bottom', color: colorUp(), fontSize: 11, fontWeight: 'bold' } });
+            if (p5 >= p20 && c5 < c20) deathCross.push({ name: '死叉 ▼', coord: [dates[i], 'max'], value: '卖出', symbol: 'triangle', symbolSize: 14, symbolRotate: 180, itemStyle: { color: colorDown() }, label: { show: true, position: 'top', color: colorDown(), fontSize: 11, fontWeight: 'bold' } });
         }
+
+        const periodLabel = { day: '日K', week: '周K', month: '月K' }[period] || '日K';
 
         const option = {
             animation: false,
+            backgroundColor: isDark() ? '#18181b' : '#ffffff',
             tooltip: {
                 trigger: 'axis',
                 axisPointer: { type: 'cross' },
@@ -65,48 +85,73 @@ const Charts = {
                     const m5 = ma5[i], m20 = ma20[i];
                     let signal = '';
                     if (m5 && m20) {
-                        signal = m5 > m20 ? '<br/><span style="color:#e03131;font-weight:600">▲ MA5 > MA20 (多头)</span>' : '<br/><span style="color:#2f9e44;font-weight:600">▼ MA5 < MA20 (空头)</span>';
+                        signal = m5 > m20
+                            ? '<br/><span style="color:' + colorUp() + ';font-weight:600">▲ MA5 > MA20 (多头)</span>'
+                            : '<br/><span style="color:' + colorDown() + ';font-weight:600">▼ MA5 < MA20 (空头)</span>';
                     }
-                    return `<b>${d.date}</b><br/>
-                        开盘: ${d.open.toFixed(2)}<br/>
-                        收盘: ${d.close.toFixed(2)}<br/>
-                        最高: <span style="color:#e03131">${d.high.toFixed(2)}</span><br/>
-                        最低: <span style="color:#2f9e44">${d.low.toFixed(2)}</span><br/>
-                        MA5: ${m5 ? m5.toFixed(2) : '-'} | MA20: ${m20 ? m20.toFixed(2) : '-'}${signal}<br/>
-                        成交量: ${Charts.formatVol(d.volume)}`;
+                    const bu = boll.upper[i], bl = boll.lower[i];
+                    let bollInfo = '';
+                    if (bu && bl) {
+                        bollInfo = '<br/>BOLL上轨: ' + bu.toFixed(2) + ' | 下轨: ' + bl.toFixed(2);
+                        if (d.close >= bu) bollInfo += ' <span style="color:' + colorDown() + '">(触及上轨)</span>';
+                        else if (d.close <= bl) bollInfo += ' <span style="color:' + colorUp() + '">(触及下轨)</span>';
+                    }
+                    return '<b>' + d.date + ' (' + periodLabel + ')</b><br/>' +
+                        '开盘: ' + d.open.toFixed(2) + '<br/>' +
+                        '收盘: ' + d.close.toFixed(2) + '<br/>' +
+                        '最高: <span style="color:' + colorUp() + '">' + d.high.toFixed(2) + '</span><br/>' +
+                        '最低: <span style="color:' + colorDown() + '">' + d.low.toFixed(2) + '</span><br/>' +
+                        'MA5: ' + (m5 ? m5.toFixed(2) : '-') + ' | MA20: ' + (m20 ? m20.toFixed(2) : '-') + signal + bollInfo + '<br/>' +
+                        '成交量: ' + Charts.formatVol(d.volume);
                 }
             },
             axisPointer: { link: [{ xAxisIndex: 'all' }] },
             grid: [
-                { left: '8%', right: '3%', top: '5%', height: '55%' },
-                { left: '8%', right: '3%', top: '68%', height: '20%' }
+                { left: '8%', right: '3%', top: '5%', height: '45%' },
+                { left: '8%', right: '3%', top: '56%', height: '15%' },
+                { left: '8%', right: '3%', top: '76%', height: '16%' }
             ],
             xAxis: [
-                { type: 'category', data: dates, gridIndex: 0, axisLine: { onZero: false }, axisLabel: { show: false }, axisTick: { show: false } },
-                { type: 'category', data: dates, gridIndex: 1, axisLabel: { formatter: v => v.slice(5), fontSize: 10 }, axisTick: { show: false } }
+                { type: 'category', data: dates, gridIndex: 0, axisLine: { onZero: false, lineStyle: { color: axisColor() } }, axisLabel: { show: false }, axisTick: { show: false } },
+                { type: 'category', data: dates, gridIndex: 1, axisLabel: { show: false }, axisTick: { show: false }, axisLine: { lineStyle: { color: axisColor() } } },
+                { type: 'category', data: dates, gridIndex: 2, axisLabel: { formatter: v => v.slice(5), fontSize: 10, color: textColor() }, axisTick: { show: false }, axisLine: { lineStyle: { color: axisColor() } } }
             ],
             yAxis: [
-                { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: '#f0f0f0' } }, axisLabel: { fontSize: 10 } },
-                { scale: true, gridIndex: 1, splitLine: { show: false }, axisLabel: { fontSize: 10, formatter: v => v >= 1e8 ? (v/1e8).toFixed(1)+'亿' : (v/1e4).toFixed(0)+'万' } }
+                { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: gridColor() } }, axisLabel: { fontSize: 10, color: textColor() } },
+                { scale: true, gridIndex: 1, splitLine: { show: false }, axisLabel: { fontSize: 9, color: textColor(), formatter: v => v >= 1e8 ? (v/1e8).toFixed(1)+'亿' : (v/1e4).toFixed(0)+'万' } },
+                { scale: true, gridIndex: 2, splitLine: { lineStyle: { color: gridColor() } }, axisLabel: { fontSize: 9, color: textColor() } }
             ],
-            dataZoom: [{ type: 'inside', xAxisIndex: [0,1], start: 70, end: 100 }],
+            dataZoom: [{ type: 'inside', xAxisIndex: [0,1,2], start: 70, end: 100 }],
             series: [
-                { name: 'K线', type: 'candlestick', data: ohlc, xAxisIndex: 0, yAxisIndex: 0, itemStyle: { color: '#e03131', color0: '#2f9e44', borderColor: '#e03131', borderColor0: '#2f9e44' } },
-                { name: 'MA5', type: 'line', data: ma5, symbol: 'none', smooth: true, lineStyle: { width: 1, color: '#e03131' },
+                { name: 'K线', type: 'candlestick', data: ohlc, xAxisIndex: 0, yAxisIndex: 0,
+                  itemStyle: { color: colorUp(), color0: colorDown(), borderColor: colorUp(), borderColor0: colorDown() } },
+                { name: 'MA5', type: 'line', data: ma5, symbol: 'none', smooth: true, xAxisIndex: 0, yAxisIndex: 0, lineStyle: { width: 1, color: colorUp() },
                   markPoint: { data: goldenCross.slice(-5), symbol: 'pin', symbolSize: 30, label: { fontSize: 10 } } },
-                { name: 'MA10', type: 'line', data: indicators.ma10 || [], symbol: 'none', smooth: true, lineStyle: { width: 1, color: '#f59e0b' } },
-                { name: 'MA20', type: 'line', data: ma20, symbol: 'none', smooth: true, lineStyle: { width: 1, color: '#6366f1' },
+                { name: 'MA20', type: 'line', data: ma20, symbol: 'none', smooth: true, xAxisIndex: 0, yAxisIndex: 0, lineStyle: { width: 1, color: '#6366f1' },
                   markPoint: { data: deathCross.slice(-5), symbol: 'pin', symbolSize: 30, symbolRotate: 180, label: { fontSize: 10 } } },
-                { name: 'MA60', type: 'line', data: indicators.ma60 || [], symbol: 'none', smooth: true, lineStyle: { width: 1, color: '#10b981' } },
-                { name: '成交量', type: 'bar', data: volumes, xAxisIndex: 1, yAxisIndex: 1, itemStyle: { color: p => kline[p.dataIndex].close >= kline[p.dataIndex].open ? '#e03131' : '#2f9e44' } }
+                // BOLL 布林带
+                { name: 'BOLL上轨', type: 'line', data: boll.upper || [], symbol: 'none', xAxisIndex: 0, yAxisIndex: 0,
+                  lineStyle: { width: 1, color: '#a78bfa', type: 'dashed' }, itemStyle: { color: '#a78bfa' } },
+                { name: 'BOLL中轨', type: 'line', data: boll.mid || [], symbol: 'none', xAxisIndex: 0, yAxisIndex: 0,
+                  lineStyle: { width: 1, color: '#8b5cf6' }, itemStyle: { color: '#8b5cf6' } },
+                { name: 'BOLL下轨', type: 'line', data: boll.lower || [], symbol: 'none', xAxisIndex: 0, yAxisIndex: 0,
+                  lineStyle: { width: 1, color: '#a78bfa', type: 'dashed' }, itemStyle: { color: '#a78bfa' } },
+                // 成交量
+                { name: '成交量', type: 'bar', data: volumes, xAxisIndex: 1, yAxisIndex: 1,
+                  itemStyle: { color: p => kline[p.dataIndex].close >= kline[p.dataIndex].open ? colorUp() : colorDown() } },
+                // MACD 子图
+                { name: 'DIF', type: 'line', data: indicators.dif || [], symbol: 'none', smooth: true, xAxisIndex: 2, yAxisIndex: 2,
+                  lineStyle: { width: 1.5, color: colorUp() } },
+                { name: 'DEA', type: 'line', data: indicators.dea || [], symbol: 'none', smooth: true, xAxisIndex: 2, yAxisIndex: 2,
+                  lineStyle: { width: 1.5, color: '#6366f1' } },
+                { name: 'MACD柱', type: 'bar', data: indicators.bar || [], xAxisIndex: 2, yAxisIndex: 2,
+                  itemStyle: { color: p => (indicators.bar && indicators.bar[p.dataIndex] >= 0) ? colorUp() : colorDown() } },
             ]
         };
 
         chart.setOption(option);
-        window.addEventListener('resize', () => chart.resize());
-        
-        // 返回信号信息给详情面板
-        return { goldenCross, deathCross, ma5, ma20, ma10: indicators.ma10 || [], ma60: indicators.ma60 || [] };
+        this._onResize(containerId);
+        return { goldenCross, deathCross, ma5, ma20, boll };
     },
 
     renderIndicator(containerId, title, dates, lines, markLines = []) {
@@ -114,7 +159,7 @@ const Charts = {
         if (!container) return;
 
         this.dispose(containerId);
-        const chart = echarts.init(container);
+        const chart = echarts.init(container, isDark() ? 'dark' : undefined);
         this.instances[containerId] = chart;
 
         const series = lines.map(l => ({
@@ -126,20 +171,20 @@ const Charts = {
         if (markLines.length > 0 && series.length > 0) {
             series[0].markLine = {
                 symbol: 'none', silent: true,
-                data: markLines.map(ml => ({ yAxis: ml.value, label: ml.label || {}, lineStyle: ml.lineStyle || { color: '#ccc', type: 'dashed' } })),
+                data: markLines.map(ml => ({ yAxis: ml.value, label: ml.label || {}, lineStyle: ml.lineStyle || { color: gridColor(), type: 'dashed' } })),
             };
         }
 
         chart.setOption({
-            title: { text: title, left: 10, top: 5, textStyle: { fontSize: 12, fontWeight: 'normal', color: '#606770' } },
+            title: { text: title, left: 10, top: 5, textStyle: { fontSize: 12, fontWeight: 'normal', color: textColor() } },
             tooltip: { trigger: 'axis' },
-            legend: { data: lines.map(l => l.name), right: 10, top: 2, textStyle: { fontSize: 10 } },
+            legend: { data: lines.map(l => l.name), right: 10, top: 2, textStyle: { fontSize: 10, color: textColor() } },
             grid: { left: '8%', right: '3%', top: '25%', bottom: '10%' },
-            xAxis: { type: 'category', data: dates, axisLabel: { fontSize: 9, formatter: v => v.slice(5) }, axisTick: { show: false } },
-            yAxis: { scale: true, splitLine: { lineStyle: { color: '#f0f0f0' } }, axisLabel: { fontSize: 10 } },
+            xAxis: { type: 'category', data: dates, axisLabel: { fontSize: 9, formatter: v => v.slice(5), color: textColor() }, axisTick: { show: false }, axisLine: { lineStyle: { color: axisColor() } } },
+            yAxis: { scale: true, splitLine: { lineStyle: { color: gridColor() } }, axisLabel: { fontSize: 10, color: textColor() } },
             series,
         });
-        window.addEventListener('resize', () => chart.resize());
+        this._onResize(containerId);
     },
 
     renderMacd(containerId, dates, indicators) {
@@ -147,26 +192,25 @@ const Charts = {
         if (!container) return;
 
         this.dispose(containerId);
-        const chart = echarts.init(container);
+        const chart = echarts.init(container, isDark() ? 'dark' : undefined);
         this.instances[containerId] = chart;
 
         const bar = indicators.bar || [];
-        const barColors = bar.map(v => v >= 0 ? '#e03131' : '#2f9e44');
 
         chart.setOption({
-            title: { text: 'MACD', left: 10, top: 5, textStyle: { fontSize: 12, fontWeight: 'normal', color: '#606770' } },
+            title: { text: 'MACD', left: 10, top: 5, textStyle: { fontSize: 12, fontWeight: 'normal', color: textColor() } },
             tooltip: { trigger: 'axis' },
-            legend: { data: ['DIF', 'DEA', 'BAR'], right: 10, top: 2, textStyle: { fontSize: 10 } },
+            legend: { data: ['DIF', 'DEA', 'BAR'], right: 10, top: 2, textStyle: { fontSize: 10, color: textColor() } },
             grid: { left: '8%', right: '3%', top: '25%', bottom: '10%' },
-            xAxis: { type: 'category', data: dates, axisLabel: { fontSize: 9, formatter: v => v.slice(5) }, axisTick: { show: false } },
-            yAxis: { scale: true, splitLine: { lineStyle: { color: '#f0f0f0' } }, axisLabel: { fontSize: 10 } },
+            xAxis: { type: 'category', data: dates, axisLabel: { fontSize: 9, formatter: v => v.slice(5), color: textColor() }, axisTick: { show: false }, axisLine: { lineStyle: { color: axisColor() } } },
+            yAxis: { scale: true, splitLine: { lineStyle: { color: gridColor() } }, axisLabel: { fontSize: 10, color: textColor() } },
             series: [
-                { name: 'DIF', type: 'line', data: indicators.dif || [], lineStyle: { width: 1.5, color: '#e03131' }, symbol: 'none', smooth: true },
+                { name: 'DIF', type: 'line', data: indicators.dif || [], lineStyle: { width: 1.5, color: colorUp() }, symbol: 'none', smooth: true },
                 { name: 'DEA', type: 'line', data: indicators.dea || [], lineStyle: { width: 1.5, color: '#6366f1' }, symbol: 'none', smooth: true },
-                { name: 'BAR', type: 'bar', data: bar, itemStyle: { color: p => barColors[p.dataIndex] } },
+                { name: 'BAR', type: 'bar', data: bar, itemStyle: { color: p => bar[p.dataIndex] >= 0 ? colorUp() : colorDown() } },
             ],
         });
-        window.addEventListener('resize', () => chart.resize());
+        this._onResize(containerId);
     },
 
     formatVol(v) {
@@ -254,5 +298,19 @@ const Charts = {
         };
         
         return { signals, overall, suggestion: suggestions[overall] };
+    },
+
+    /** 重新渲染所有活跃图表（主题切换时调用）*/
+    refreshAllThemes() {
+        Object.keys(this.instances).forEach(id => {
+            const inst = this.instances[id];
+            if (inst && !inst.isDisposed()) {
+                inst.dispose();
+                delete this.instances[id];
+            }
+        });
     }
 };
+
+window.Charts = Charts;
+})();

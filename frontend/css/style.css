@@ -40,6 +40,69 @@
     --transition: 0.2s ease;
 }
 
+/* ============ 深色主题 ============ */
+[data-theme="dark"] {
+    --bg-primary: #18181b;
+    --bg-secondary: #1f1f23;
+    --bg-tertiary: #27272a;
+    --bg-hover: #2d2d32;
+    --bg-card: #1f1f23;
+    --bg-input: #27272a;
+    --text-primary: #e4e4e7;
+    --text-secondary: #a1a1aa;
+    --text-muted: #71717a;
+    --text-inverse: #18181b;
+    --border-color: #3f3f46;
+    --border-light: #2d2d32;
+
+    --color-up: #ef4444;
+    --color-down: #22c55e;
+    --color-flat: #a1a1aa;
+    --color-up-bg: #3b1111;
+    --color-down-bg: #0d2e1a;
+
+    --primary: #3b82f6;
+    --primary-hover: #60a5fa;
+    --primary-light: #1e3a5f;
+    --primary-dark: #93c5fd;
+    --warning: #fbbf24;
+    --danger: #f87171;
+    --success: #34d399;
+    --info: #818cf8;
+
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+    --shadow: 0 2px 8px rgba(0,0,0,0.4);
+    --shadow-lg: 0 4px 16px rgba(0,0,0,0.5);
+}
+
+/* 主题切换按钮 */
+.theme-toggle {
+    background: none;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px 8px;
+    font-size: 16px;
+    transition: var(--transition);
+    margin-left: 8px;
+}
+.theme-toggle:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* K线周期按钮 */
+.kline-period-btn {
+    padding: 2px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    transition: var(--transition);
+}
+.kline-period-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+.kline-period-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
 /* ============ 基础样式 ============ */
 *, *::before, *::after {
     margin: 0;
