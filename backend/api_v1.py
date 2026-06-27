@@ -478,6 +478,77 @@ def sentiment_thermometer():
     return success(result)
 
 
+# ============ AI 选股 ============
+
+def _gather_market_data():
+    """收集全市场数据供 AI 分析（监控股票 + 全市场板块龙头）"""
+    stocks, quotes = _get_monitor_data()
+
+    from market_sentiment import get_market_thermometer
+    from sector_analysis import get_sector_ranking
+    from fund_flow import get_sector_fund_flow
+
+    # 获取板块排名（全市场数据）
+    sector_ranking = get_sector_ranking("industry", 20)
+    concept_ranking = get_sector_ranking("concept", 20)
+    fund_flow = get_sector_fund_flow("all", 20)
+
+    # 收集板块龙头股票代码（全市场，不只监控的股票）
+    leader_codes = set()
+    for ranking in [sector_ranking, concept_ranking]:
+        if ranking and ranking.get("top"):
+            for r in ranking["top"]:
+                lc = r.get("leader_code", "")
+                if lc and lc != "-":
+                    leader_codes.add(lc)
+
+    # 批量获取龙头股行情（不在已有quotes中的）
+    new_codes = [c for c in leader_codes if c not in quotes]
+    if new_codes:
+        try:
+            leader_quotes = fetch_tencent_quotes(new_codes)
+            quotes = {**quotes, **leader_quotes}
+        except Exception as e:
+            print(f"[AI] 获取龙头股行情失败: {e}")
+
+    # 基于扩展后的 quotes 计算情绪
+    sentiment = get_market_thermometer(quotes) if quotes else None
+    indices = sentiment.get("indices", {}) if sentiment else {}
+
+    return quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices
+
+
+@api_v1.route('/ai/screen', methods=['POST'])
+@login_required
+def ai_screen_query():
+    """对话式 AI 选股"""
+    body = request.get_json(silent=True) or {}
+    query = body.get('query', '').strip()
+    if not query:
+        return error(40001, "请输入选股问题", "INVALID_PARAM")
+
+    quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices = _gather_market_data()
+    if not quotes:
+        return error(50003, "暂无实时行情数据", "NO_DATA")
+
+    from ai_screener import ai_screen
+    result = ai_screen(query, quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices)
+    return success(result)
+
+
+@api_v1.route('/ai/quick-pick', methods=['POST'])
+@login_required
+def ai_quick_pick():
+    """一键选股：AI 自动分析市场推荐8只短线标的"""
+    quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices = _gather_market_data()
+    if not quotes:
+        return error(50003, "暂无实时行情数据", "NO_DATA")
+
+    from ai_screener import ai_quick_pick
+    result = ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices)
+    return success(result)
+
+
 # ============ 接口列表 ============
 
 @api_v1.route('/', methods=['GET'])
@@ -509,5 +580,7 @@ def api_index():
             "monitor_start": "POST /api/v1/monitor/start",
             "monitor_stop": "POST /api/v1/monitor/stop",
             "monitor_interval": "POST /api/v1/monitor/interval",
+            "ai_screen": "POST /api/v1/ai/screen",
+            "ai_quick_pick": "POST /api/v1/ai/quick-pick",
         }
     })

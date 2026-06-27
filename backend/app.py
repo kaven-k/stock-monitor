@@ -28,7 +28,9 @@ from api_v1 import api_v1
 
 def create_app():
     """创建并配置 Flask 应用"""
-    app = Flask(__name__)
+    # 静态文件路径：backend/../frontend (新版前端SPA)
+    static_folder = os.path.join(os.path.dirname(__file__), '..', 'frontend')
+    app = Flask(__name__, static_folder=static_folder, static_url_path='')
     app.config['SECRET_KEY'] = FLASK_SECRET_KEY
     app.config['JSON_AS_ASCII'] = False
 
@@ -42,6 +44,12 @@ def create_app():
     # 注册蓝图
     app.register_blueprint(auth_bp, url_prefix='/api/v1/auth')
     app.register_blueprint(api_v1)
+
+    # 首页（服务前端 SPA）
+    from flask import send_from_directory
+    @app.route('/')
+    def index():
+        return send_from_directory(static_folder, 'index.html')
 
     # 全局错误处理
     @app.errorhandler(404)

@@ -503,13 +503,6 @@ function updateDetailPanel() {
     const container = document.getElementById('detail-content');
     if (!container) return;
 
-    // 标题栏名称
-    document.getElementById('detail-name').textContent = name;
-    document.getElementById('detail-code').textContent = code;
-
-    const container = document.getElementById('detail-content');
-    if (!container) return;
-
     const pc = q.change_pct > 0 ? 'var(--color-up)' : (q.change_pct < 0 ? 'var(--color-down)' : 'var(--text-primary)');
     const sign = q.change_pct > 0 ? '+' : '';
     const cc = q.change_pct > 0 ? 'change-up' : (q.change_pct < 0 ? 'change-down' : 'change-flat');
@@ -676,8 +669,9 @@ function switchGroupView(groupId) {
     State.currentGroupId = groupId;
     document.getElementById('view-title').textContent = groupId ? (State.groups.find(g => g.id == groupId)?.name || '') : '全部股票';
     document.querySelectorAll('.sidebar-item').forEach(e => e.classList.remove('active'));
-    const item = document.querySelector(`.sidebar-item[data-group-id="${groupId}"]`) || document.querySelector('.sidebar-item[data-view="all"]');
+    const item = document.querySelector('.sidebar-item[data-group-id="' + groupId + '"]') || document.querySelector('.sidebar-item[data-view="all"]');
     if (item) item.classList.add('active');
+    showStockView();  // 确保从AI视图/市场视图切换回股票面板
     renderStockTable();
 }
 
@@ -833,6 +827,7 @@ function showStockView() {
     document.getElementById('stock-panel').style.display = '';
     document.getElementById('rules-panel').style.display = 'none';
     document.getElementById('market-panel').style.display = 'none';
+    document.getElementById('ai-panel').style.display = 'none';
     document.getElementById('toolbar-stock').style.display = '';
 }
 
@@ -867,6 +862,7 @@ async function showRulesView() {
     document.getElementById('stock-panel').style.display = 'none';
     document.getElementById('rules-panel').style.display = '';
     document.getElementById('market-panel').style.display = 'none';
+    document.getElementById('ai-panel').style.display = 'none';
     document.getElementById('toolbar-stock').style.display = 'none';
     await loadRulesView();
 }
@@ -1086,6 +1082,7 @@ async function showMarketView() {
     document.getElementById('stock-panel').style.display = 'none';
     document.getElementById('rules-panel').style.display = 'none';
     document.getElementById('market-panel').style.display = '';
+    document.getElementById('ai-panel').style.display = 'none';
     document.getElementById('toolbar-stock').style.display = 'none';
     await loadMarketData();
 }
@@ -1233,7 +1230,113 @@ document.addEventListener('click', e => {
     else if (view === 'alerts') showAlertLogs();
     else if (view === 'rules') showRulesView();
     else if (view === 'market') showMarketView();
+    else if (view === 'ai') showAIView();
 });
+
+// ====== AI 智能选股 ======
+function showAIView() {
+    document.getElementById('stock-panel').style.display = 'none';
+    document.getElementById('market-panel').style.display = 'none';
+    document.getElementById('ai-panel').style.display = '';
+    document.getElementById('view-title').textContent = 'AI 智能选股';
+    document.getElementById('toolbar-stock').style.display = 'none';
+    document.getElementById('stock-table').style.display = 'none';
+}
+
+async function aiQuickPick() {
+    const btn = document.getElementById('btn-quick-pick');
+    const loading = document.getElementById('ai-loading');
+    const result = document.getElementById('ai-result');
+    
+    btn.disabled = true;
+    btn.textContent = '⏳ AI 分析中...';
+    loading.style.display = 'block';
+    result.innerHTML = '';
+    
+    try {
+        const res = await api.post('/ai/quick-pick');
+        loading.style.display = 'none';
+        btn.textContent = '⚡ 一键选股 — AI 自动分析市场，推荐8只短线标的';
+        btn.disabled = false;
+        
+        if (res.code === 0 && res.data.success) {
+            renderAIQuickPickResult(res.data);
+        } else {
+            result.innerHTML = '<div style="color:var(--danger);padding:16px;text-align:center">' +
+                'AI 分析失败: ' + ((res.data && res.data.error) || '未知错误') + '</div>';
+        }
+    } catch (e) {
+        loading.style.display = 'none';
+        btn.textContent = '⚡ 一键选股 — AI 自动分析市场，推荐8只短线标的';
+        btn.disabled = false;
+        result.innerHTML = '<div style="color:var(--danger);padding:16px;text-align:center">网络请求失败: ' + e.message + '</div>';
+    }
+}
+
+function renderAIQuickPickResult(data) {
+    const summary = data.summary || '';
+    const stocks = data.stocks || [];
+    
+    let html = '<div style="margin-bottom:16px;padding:12px 16px;background:var(--bg-tertiary);border-radius:var(--radius);font-size:13px;color:var(--text-secondary)">' +
+        '<span style="font-weight:600;color:var(--text-primary)">市场策略: </span>' + summary + '</div>';
+    
+    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
+    stocks.forEach((s, i) => {
+        const scoreColor = s.score >= 80 ? 'var(--color-up)' : s.score >= 60 ? 'var(--warning)' : 'var(--text-muted)';
+        html += '<div style="background:var(--bg-tertiary);border-radius:var(--radius);padding:14px;border-left:3px solid ' + scoreColor + '">' +
+            '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px">' +
+            '<div><span style="font-weight:700;font-size:15px">#' + (i+1) + ' ' + s.name + '</span><span style="color:var(--text-muted);font-size:11px;margin-left:6px">' + s.code + '</span></div>' +
+            '<span style="font-size:12px;font-weight:700;color:' + scoreColor + '">' + s.score + '分</span></div>' +
+            '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5">' + (s.reason || '') + '</div>' +
+            '<div style="display:flex;gap:12px;font-size:11px;color:var(--text-muted)">' +
+            '<span>持仓: ' + (s.hold_days || '?') + '天</span>' +
+            '<span style="color:var(--color-down)">止损: ' + (s.stop_loss || '?') + '</span>' +
+            '<span style="color:var(--color-up)">目标: ' + (s.target || '?') + '</span>' +
+            '</div></div>';
+    });
+    html += '</div>';
+    
+    document.getElementById('ai-result').innerHTML = html;
+}
+
+async function aiScreen() {
+    const input = document.getElementById('ai-query-input');
+    const query = input.value.trim();
+    if (!query) return;
+    
+    const result = document.getElementById('ai-result');
+    const loading = document.getElementById('ai-loading');
+    loading.style.display = 'block';
+    result.innerHTML = '';
+    input.disabled = true;
+    
+    try {
+        const res = await api.post('/ai/screen', { query });
+        loading.style.display = 'none';
+        input.disabled = false;
+        
+        if (res.code === 0 && res.data.success) {
+            let html = '<div style="background:var(--bg-tertiary);border-radius:var(--radius);padding:16px;margin-bottom:12px;font-size:13px;line-height:1.7;white-space:pre-wrap">' +
+                (res.data.answer || '') + '</div>';
+            
+            if (res.data.stocks && res.data.stocks.length > 0) {
+                html += '<div style="font-size:12px;font-weight:600;margin-bottom:8px">推荐标的:</div>';
+                res.data.stocks.forEach((s, i) => {
+                    html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;margin-bottom:4px;background:var(--bg-tertiary);border-radius:4px;font-size:12px">' +
+                        '<span style="font-weight:600">' + s.name + '(' + s.code + ')</span>' +
+                        '<span style="color:var(--text-secondary);max-width:300px;text-align:right">' + (s.reason || '') + '</span></div>';
+                });
+            }
+            result.innerHTML = html;
+        } else {
+            result.innerHTML = '<div style="color:var(--danger);padding:16px;text-align:center">AI 分析失败</div>';
+        }
+    } catch (e) {
+        loading.style.display = 'none';
+        input.disabled = false;
+        result.innerHTML = '<div style="color:var(--danger);padding:16px;text-align:center">请求失败: ' + e.message + '</div>';
+    }
+}
 
 // 退出
 async function doLogout() {

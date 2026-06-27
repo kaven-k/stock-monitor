@@ -59,5 +59,10 @@ FEISHU_APP_ID = os.environ.get("FEISHU_APP_ID", "")
 FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET", "")
 FEISHU_USER_ID = os.environ.get("FEISHU_USER_ID", "")
 
+# DeepSeek AI 选股
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
+DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-pro")
+DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+
 # 接口限流 (每分钟最大请求数)
 RATE_LIMIT_PER_MINUTE = 100
