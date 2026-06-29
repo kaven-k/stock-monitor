@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StockMonitor 使用教程 — A股实时监控 & AI智能选股</title>
+    <style>
+        :root {
+            --bg: #0f1117;
+            --card: #1a1d27;
+            --card2: #222533;
+            --border: #2a2d3a;
+            --text: #e1e4ea;
+            --text2: #9da3b3;
+            --accent: #3b82f6;
+            --accent2: #22c55e;
+            --warn: #f59e0b;
+            --danger: #ef4444;
+            --code: #161822;
+            --radius: 10px;
+            --font: -apple-system, "Microsoft YaHei", sans-serif;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body {
+            font-family: var(--font);
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.7;
+        }
+        .nav {
+            position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+            background: rgba(15,17,23,.92); backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+            padding: 10px 24px; display: flex; gap: 24px; align-items: center;
+            flex-wrap: wrap;
+        }
+        .nav a { color: var(--text2); text-decoration: none; font-size: 13px; transition: color .15s; }
+        .nav a:hover { color: var(--accent); }
+        .nav .brand { font-weight: 700; color: var(--text); font-size: 15px; margin-right: auto; }
+
+        .container { max-width: 900px; margin: 0 auto; padding: 80px 24px 60px; }
+
+        h1 { font-size: 2rem; margin-bottom: 8px; }
+        h2 { font-size: 1.35rem; margin: 48px 0 16px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+        h3 { font-size: 1.1rem; margin: 28px 0 10px; }
+
+        .hero { text-align: center; padding: 60px 0 40px; }
+        .hero p { color: var(--text2); font-size: 1.05rem; max-width: 600px; margin: 12px auto 0; }
+        .badges { display: flex; gap: 10px; justify-content: center; margin-top: 20px; flex-wrap: wrap; }
+        .badge {
+            padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600;
+            background: var(--card2); border: 1px solid var(--border);
+        }
+        .badge.green { color: var(--accent2); border-color: rgba(34,197,94,.3); }
+        .badge.blue { color: var(--accent); border-color: rgba(59,130,246,.3); }
+        .badge.amber { color: var(--warn); border-color: rgba(245,158,11,.3); }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            margin: 16px 0;
+        }
+        .card.accent { border-left: 3px solid var(--accent); }
+        .card.green { border-left: 3px solid var(--accent2); }
+        .card.warn { border-left: 3px solid var(--warn); }
+        .card.danger { border-left: 3px solid var(--danger); }
+
+        code {
+            background: var(--code);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+            font-size: 13px;
+            color: #e5c07b;
+        }
+        pre {
+            background: var(--code);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 16px 20px;
+            overflow-x: auto;
+            font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            margin: 12px 0;
+        }
+        pre code { background: none; padding: 0; color: #abb2bf; }
+
+        ul, ol { padding-left: 24px; margin: 8px 0; }
+        li { margin: 6px 0; color: var(--text2); }
+        li strong { color: var(--text); }
+
+        .step { display: flex; gap: 16px; align-items: flex-start; margin: 20px 0; }
+        .step-num {
+            flex-shrink: 0; width: 32px; height: 32px; border-radius: 50%;
+            background: var(--accent); color: #fff; display: flex; align-items: center;
+            justify-content: center; font-weight: 700; font-size: 14px;
+        }
+
+        table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+        th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+        th { color: var(--text2); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+        td code { white-space: nowrap; }
+
+        .footer {
+            text-align: center; padding: 40px 0; color: var(--text2); font-size: 12px;
+            border-top: 1px solid var(--border); margin-top: 60px;
+        }
+        .footer a { color: var(--accent); }
+
+        @media (max-width: 640px) {
+            .container { padding: 80px 16px 40px; }
+            .nav { gap: 12px; }
+            pre { font-size: 11px; padding: 12px; }
+        }
+    </style>
+</head>
+<body>
+
+<nav class="nav">
+    <span class="brand">📊 StockMonitor</span>
+    <a href="#overview">概述</a>
+    <a href="#install">安装</a>
+    <a href="#config">配置</a>
+    <a href="#start">启动</a>
+    <a href="#features">功能</a>
+    <a href="#trouble">排错</a>
+</nav>
+
+<div class="container">
+
+    <!-- ====== Hero ====== -->
+    <div class="hero">
+        <h1>📊 StockMonitor 使用教程</h1>
+        <p>A 股实时行情监控 + AI 智能选股系统，前后端分离架构，开箱即用。</p>
+        <div class="badges">
+            <span class="badge blue">Python 3.11+</span>
+            <span class="badge green">Flask + SocketIO</span>
+            <span class="badge amber">SQLite</span>
+            <span class="badge blue">ECharts</span>
+            <span class="badge green">DeepSeek AI</span>
+            <span class="badge amber">JWT 认证</span>
+        </div>
+    </div>
+
+    <!-- ====== 概述 ====== -->
+    <h2 id="overview">📋 项目概述</h2>
+    <p>StockMonitor 是一套面向 A 股短线交易者的实时监控与 AI 选股系统，核心能力：</p>
+
+    <div class="card accent">
+        <ul>
+            <li><strong>实时行情监控</strong> — 腾讯财经数据源，不封 IP，5 秒刷新</li>
+            <li><strong>K 线 & 技术指标</strong> — 日/周/月 K，MA/MACD/RSI/BOLL/KDJ 全量计算</li>
+            <li><strong>多维度预警</strong> — 13 种预警规则（价格突破/涨跌幅/量比/涨跌停等），支持飞书通知</li>
+            <li><strong>AI 智能选股</strong> — DeepSeek 大模型分析全市场，6 维框架选股，自动记录供复盘</li>
+            <li><strong>市场概览</strong> — 三大指数 + 恐慌贪婪指数 + 板块排名 + 资金流向 + 主线板块识别</li>
+            <li><strong>深色 / 浅色主题</strong> — 一键切换，ECharts 图表自适应</li>
+        </ul>
+    </div>
+
+    <h3>项目结构</h3>
+    <pre><code>stock-monitor/
+├── backend/                 # 后端 (Flask REST API)
+│   ├── app.py               # 主入口，启动服务
+│   ├── api_v1.py            # /api/v1/ 所有接口
+│   ├── ai_screener.py       # DeepSeek AI 选股引擎
+│   ├── database.py          # SQLite 数据层
+│   ├── data_fetcher.py      # 行情数据抓取 (腾讯/百度/东财)
+│   ├── alert_engine.py      # 13 种预警规则引擎
+│   ├── sector_analysis.py   # 板块排名 + 主线识别
+│   ├── fund_flow.py         # 资金流向
+│   ├── market_sentiment.py  # 市场情绪 (恐慌贪婪指数)
+│   ├── auth.py              # JWT 认证 + 用户管理
+│   ├── config.py            # 全局配置
+│   └── feishu_notify.py     # 飞书机器人通知
+├── frontend/                # 前端 (独立 SPA)
+│   ├── index.html           # 主页面
+│   ├── js/
+│   │   ├── api.js           # API 客户端 (JWT 自动注入)
+│   │   ├── app.js           # 主应用逻辑
+│   │   └── charts.js        # ECharts 图表封装
+│   └── css/
+│       └── style.css        # 全局样式 + 深色主题
+├── .env                     # 环境变量 (需自行创建)
+├── AI_STRATEGY.md           # AI 选股策略说明书
+└── TUTORIAL.html            # 本教程
+</code></pre>
+
+    <!-- ====== 安装 ====== -->
+    <h2 id="install">🛠 环境与安装</h2>
+
+    <h3>前置依赖</h3>
+    <table>
+        <tr><th>依赖</th><th>版本要求</th><th>用途</th></tr>
+        <tr><td>Python</td><td>≥ 3.9 (推荐 3.11+)</td><td>后端运行时</td></tr>
+        <tr><td>Flask</td><td>≥ 3.0</td><td>Web 框架</td></tr>
+        <tr><td>flask-socketio</td><td>≥ 5.3</td><td>WebSocket 实时推送</td></tr>
+        <tr><td>flask-cors</td><td>≥ 4.0</td><td>跨域支持</td></tr>
+        <tr><td>requests</td><td>—</td><td>HTTP 调用 (行情+AI)</td></tr>
+        <tr><td>PyJWT</td><td>—</td><td>用户认证 JWT</td></tr>
+        <tr><td>mootdx</td><td>可选</td><td>本地通达信 K 线 (无则用百度)</td></tr>
+    </table>
+
+    <div class="step">
+        <div class="step-num">1</div>
+        <div>
+            <strong>克隆项目</strong>
+            <pre><code>git clone https://github.com/kaven-k/stock-monitor.git
+cd stock-monitor</code></pre>
+        </div>
+    </div>
+
+    <div class="step">
+        <div class="step-num">2</div>
+        <div>
+            <strong>创建虚拟环境（推荐）并安装依赖</strong>
+            <pre><code>python -m venv venv
+
+# Windows
+venv\Scripts\activate
+
+# macOS / Linux
+source venv/bin/activate
+
+# 安装依赖
+pip install flask flask-socketio flask-cors requests pyjwt</code></pre>
+        </div>
+    </div>
+
+    <!-- ====== 配置 ====== -->
+    <h2 id="config">⚙️ 配置</h2>
+
+    <p>在项目根目录 <code>stock-monitor/</code> 下创建 <code>.env</code> 文件：</p>
+
+    <pre><code># ---------- 必填：DeepSeek API Key ----------
+# 注册地址：https://platform.deepseek.com
+DEEPSEEK_API_KEY=sk-your-key-here
+
+# ---------- DeepSeek 模型 ----------
+DEEPSEEK_MODEL=deepseek-v4-pro
+
+# ---------- 飞书通知（可选，不需要可留空）----------
+FEISHU_APP_ID=
+FEISHU_APP_SECRET=
+FEISHU_USER_ID=
+
+# ---------- 服务端口（默认 5000）----------
+API_PORT=5000</code></pre>
+
+    <div class="card green">
+        <strong>💡 没有 DeepSeek Key 也能用！</strong><br>
+        不配 API Key 时，行情监控、K 线、预警等功能完全正常，只是不能使用 AI 一键选股和对话选股。
+    </div>
+
+    <!-- ====== 启动 ====== -->
+    <h2 id="start">🚀 启动服务</h2>
+
+    <div class="step">
+        <div class="step-num">1</div>
+        <div>
+            <strong>启动后端</strong>
+            <pre><code>cd backend
+python app.py</code></pre>
+            <p style="color:var(--text2);font-size:13px;margin-top:4px">看到 <code>Running on http://127.0.0.1:5000</code> 即启动成功。</p>
+        </div>
+    </div>
+
+    <div class="step">
+        <div class="step-num">2</div>
+        <div>
+            <strong>打开前端</strong>
+            <p>浏览器访问 <code>http://localhost:5000</code></p>
+        </div>
+    </div>
+
+    <div class="step">
+        <div class="step-num">3</div>
+        <div>
+            <strong>注册 / 登录</strong>
+            <p>首次使用点击"立即注册"创建账号。默认数据库无用户，任意用户名+密码即可注册。</p>
+        </div>
+    </div>
+
+    <!-- ====== 功能详解 ====== -->
+    <h2 id="features">📖 功能详解</h2>
+
+    <h3>1. 添加监控股票</h3>
+    <p>点击顶部栏 <code>+ 添加股票</code>，搜索股票代码或名称，支持模糊搜索。添加后右侧详情面板可查看 K 线图和技术指标。</p>
+
+    <h3>2. K 线图 & 技术指标</h3>
+    <p>点击任意股票行打开详情面板：</p>
+    <ul>
+        <li><strong>K 线</strong> — 日/周/月切换，支持缩放、拖拽</li>
+        <li><strong>技术指标</strong> — MACD / RSI / KDJ / BOLL，纯 Python 计算</li>
+        <li><strong>基本信息</strong> — 价格、涨跌幅、换手率、PE/PB、市值</li>
+    </ul>
+
+    <h3>3. 预警规则</h3>
+    <p>左侧 <code>规则管理</code> 或顶部 <code>+ 预警规则</code>，支持 13 种预警类型：</p>
+    <table>
+        <tr><th>类型</th><th>触发条件</th></tr>
+        <tr><td><code>price_up</code></td><td>股价向上突破指定价位</td></tr>
+        <tr><td><code>price_down</code></td><td>股价向下跌破指定价位</td></tr>
+        <tr><td><code>change_up</code></td><td>当日涨幅超过阈值</td></tr>
+        <tr><td><code>change_down</code></td><td>当日跌幅超过阈值</td></tr>
+        <tr><td><code>volume_surge</code></td><td>成交量突然放大</td></tr>
+        <tr><td><code>turnover_high</code></td><td>换手率超过阈值</td></tr>
+        <tr><td><code>amplitude_high</code></td><td>日内振幅过大</td></tr>
+        <tr><td><code>price_break_ma</code></td><td>价格突破均线</td></tr>
+        <tr><td><code>continuous_up</code></td><td>连续 N 日上涨</td></tr>
+        <tr><td><code>continuous_down</code></td><td>连续 N 日下跌</td></tr>
+        <tr><td><code>volume_ratio</code></td><td>量比异常</td></tr>
+        <tr><td><code>limit_up</code></td><td>触及涨停</td></tr>
+        <tr><td><code>limit_down</code></td><td>触及跌停</td></tr>
+    </table>
+    <p>规则创建后，每 5 秒检查一次，触发时页面弹窗 + 可选飞书通知。</p>
+
+    <h3>4. 股票分组</h3>
+    <p>左侧 <code>股票分组</code> 区域，点击 <code>+</code> 创建分组（如"半导体""医药"），将股票拖入对应分组，便于按板块查看。</p>
+
+    <h3>5. 市场概览</h3>
+    <p>左侧 <code>📊 市场概览</code> 查看：</p>
+    <ul>
+        <li>三大指数（上证/深证/创业板）实时行情</li>
+        <li>恐慌贪婪指数 + 市场涨跌比</li>
+        <li>行业涨幅 TOP10 + 概念涨幅 TOP10</li>
+        <li>板块资金流向（流入/流出 TOP5）</li>
+        <li>主线板块识别（综合评分模型）</li>
+    </ul>
+
+    <h3>6. AI 智能选股 ⭐</h3>
+    <p>左侧 <code>🤖 智能选股</code>，两种模式：</p>
+
+    <div class="card accent">
+        <strong>⚡ 一键选股</strong> — 点击按钮，AI 自动从全市场筛选 8 只最佳短线标的，输出评分、买入逻辑、建议买点、止损价、目标价。结果自动保存到数据库。
+    </div>
+
+    <div class="card accent">
+        <strong>💬 对话选股</strong> — 自由输入条件（如 "推荐半导体板块的短线标的"），AI 结合实时市场数据给出分析和推荐。
+    </div>
+
+    <h3>7. AI 选股记录（复盘）</h3>
+    <p>左侧 <code>📋 AI选股记录</code>：</p>
+    <ul>
+        <li>按日期分组展示所有历史 AI 推荐</li>
+        <li>每条记录包含：买点、评分、推荐理由、止损/目标</li>
+        <li>记录推荐时的行情快照（现价、涨跌幅、成交量）供复盘对比</li>
+        <li>预留复盘标记字段（命中目标 / 触发止损 / 平盘）</li>
+    </ul>
+
+    <h3>8. 深色 / 浅色主题</h3>
+    <p>顶部栏右侧点击 <code>🌙</code> / <code>☀️</code> 切换，偏好自动保存到 localStorage。</p>
+
+    <h3>9. 监控控制</h3>
+    <p>顶部 <code>⏸ 暂停监控</code> 可临时停止行情推送，刷新间隔可从下拉菜单调整（3/5/10/30 秒）。</p>
+
+    <!-- ====== 排错 ====== -->
+    <h2 id="trouble">🔧 常见问题</h2>
+
+    <div class="card warn">
+        <strong>Q: 页面显示"暂无股票数据"</strong><br>
+        A: 服务器进程可能异常，重启 <code>backend/app.py</code> 即可。长时间运行的 Flask 开发服务器偶尔会进入异常状态。
+    </div>
+
+    <div class="card warn">
+        <strong>Q: AI 选股报错"解析失败"</strong><br>
+        A: DeepSeek 偶发返回非标准 JSON。已内置 3 级降级解析策略，重试一次通常可解决。
+    </div>
+
+    <div class="card warn">
+        <strong>Q: 周 K / 月 K 无法切换</strong><br>
+        A: 确认网络可访问东方财富 API。日线优先从数据库缓存读取，周月线走 API 实时拉取。
+    </div>
+
+    <div class="card warn">
+        <strong>Q: 飞书通知收不到</strong><br>
+        A: 检查 <code>.env</code> 中飞书三要素是否正确。需要先在飞书开放平台创建应用并获取凭据。
+    </div>
+
+    <div class="card warn">
+        <strong>Q: 前端改动后没有生效</strong><br>
+        A: 浏览器缓存了旧 JS 文件。刷新页面（<code>Ctrl + Shift + R</code>）或清除缓存即可。生产环境已配置 <code>Cache-Control: no-cache</code>。
+    </div>
+
+    <div class="card danger">
+        <strong>⚠️ 注意</strong><br>
+        本系统仅作为股票监控和选股辅助工具，<strong>不构成任何投资建议</strong>。所有 AI 推荐仅供参考，入市有风险，投资需谨慎。
+    </div>
+
+    <!-- ====== Footer ====== -->
+    <div class="footer">
+        <p>StockMonitor v2.0 · <a href="https://github.com/kaven-k/stock-monitor" target="_blank">GitHub</a></p>
+        <p style="margin-top:4px">Flask + SocketIO + ECharts + DeepSeek · MIT License</p>
+    </div>
+
+</div>
+</body>
+</html>
