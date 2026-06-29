@@ -828,6 +828,7 @@ function showStockView() {
     document.getElementById('rules-panel').style.display = 'none';
     document.getElementById('market-panel').style.display = 'none';
     document.getElementById('ai-panel').style.display = 'none';
+    document.getElementById('ai-picks-panel').style.display = 'none';
     document.getElementById('toolbar-stock').style.display = '';
 }
 
@@ -863,6 +864,7 @@ async function showRulesView() {
     document.getElementById('rules-panel').style.display = '';
     document.getElementById('market-panel').style.display = 'none';
     document.getElementById('ai-panel').style.display = 'none';
+    document.getElementById('ai-picks-panel').style.display = 'none';
     document.getElementById('toolbar-stock').style.display = 'none';
     await loadRulesView();
 }
@@ -1083,6 +1085,7 @@ async function showMarketView() {
     document.getElementById('rules-panel').style.display = 'none';
     document.getElementById('market-panel').style.display = '';
     document.getElementById('ai-panel').style.display = 'none';
+    document.getElementById('ai-picks-panel').style.display = 'none';
     document.getElementById('toolbar-stock').style.display = 'none';
     await loadMarketData();
 }
@@ -1231,6 +1234,7 @@ document.addEventListener('click', e => {
     else if (view === 'rules') showRulesView();
     else if (view === 'market') showMarketView();
     else if (view === 'ai') showAIView();
+    else if (view === 'ai-picks') showAIPicksView();
 });
 
 // ====== AI 智能选股 ======
@@ -1238,9 +1242,114 @@ function showAIView() {
     document.getElementById('stock-panel').style.display = 'none';
     document.getElementById('market-panel').style.display = 'none';
     document.getElementById('ai-panel').style.display = '';
+    document.getElementById('ai-picks-panel').style.display = 'none';
     document.getElementById('view-title').textContent = 'AI 智能选股';
     document.getElementById('toolbar-stock').style.display = 'none';
     document.getElementById('stock-table').style.display = 'none';
+}
+
+// ====== AI 选股记录 ======
+function showAIPicksView() {
+    document.getElementById('stock-panel').style.display = 'none';
+    document.getElementById('market-panel').style.display = 'none';
+    document.getElementById('ai-panel').style.display = 'none';
+    document.getElementById('ai-picks-panel').style.display = '';
+    document.getElementById('view-title').textContent = 'AI选股记录';
+    document.getElementById('toolbar-stock').style.display = 'none';
+    loadAIPickDates();
+}
+
+async function loadAIPickDates() {
+    const dateList = document.getElementById('ai-picks-date-list');
+    dateList.innerHTML = '<div style="padding:12px;text-align:center;color:var(--text-muted);font-size:13px">加载中...</div>';
+    
+    try {
+        const resp = await fetch(`${API_BASE}/ai/picks/dates`, {
+            headers: { 'Authorization': `Bearer ${api.token}` }
+        });
+        const data = await resp.json();
+        if (data.code !== 0 || !data.data || data.data.length === 0) {
+            dateList.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:13px">暂无选股记录<br><small>使用「一键选股」生成推荐后自动记录</small></div>';
+            return;
+        }
+        
+        dateList.innerHTML = data.data.map((d, i) => `
+            <div class="ai-pick-date-item${i === 0 ? ' active' : ''}" onclick="loadAIPicksByDate('${d.date}', this)" data-date="${d.date}">
+                <div style="font-weight:600;font-size:13px">📅 ${d.date}</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${d.count} 只推荐股票</div>
+            </div>
+        `).join('');
+        
+        // 自动加载最新一条
+        if (data.data.length > 0) {
+            loadAIPicksByDate(data.data[0].date, dateList.querySelector('.ai-pick-date-item'));
+        }
+    } catch (e) {
+        dateList.innerHTML = '<div style="padding:12px;text-align:center;color:var(--danger);font-size:13px">加载失败</div>';
+    }
+}
+
+async function loadAIPicksByDate(pickDate, dateItemEl) {
+    // 高亮选中日期
+    document.querySelectorAll('.ai-pick-date-item').forEach(el => el.classList.remove('active'));
+    if (dateItemEl) dateItemEl.classList.add('active');
+    
+    const detail = document.getElementById('ai-picks-detail');
+    detail.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:40px 0">加载中...</div>';
+    
+    try {
+        const resp = await fetch(`${API_BASE}/ai/picks?date=${pickDate}`, {
+            headers: { 'Authorization': `Bearer ${api.token}` }
+        });
+        const data = await resp.json();
+        if (data.code !== 0 || !data.data || data.data.length === 0) {
+            detail.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:80px 0">暂无记录</div>';
+            return;
+        }
+        
+        const picks = data.data;
+        const total = picks.reduce((s, p) => s + p.score, 0);
+        const avg = Math.round(total / picks.length);
+        
+        detail.innerHTML = `
+            <div style="margin-bottom:16px">
+                <h3 style="font-size:15px;font-weight:600;margin:0 0 4px 0">📅 ${pickDate} AI选股结果</h3>
+                <div style="font-size:12px;color:var(--text-muted)">共 ${picks.length} 只推荐 | 平均评分 ${avg} 分</div>
+            </div>
+            <div style="display:grid;gap:12px">
+                ${picks.map((p, i) => {
+                    const snapshot = p.rec_price ? `推荐时: ¥${p.rec_price.toFixed(2)} ${p.rec_change_pct >= 0 ? '+' : ''}${p.rec_change_pct.toFixed(2)}%` : '';
+                    const entryInfo = p.entry_price ? `💰 买点: ${p.entry_price}` : '';
+                    const volumeInfo = p.rec_volume ? `量: ${(p.rec_volume/10000).toFixed(0)}万手` : '';
+                    return `
+                    <div class="ai-pick-card">
+                        <div class="ai-pick-card-header">
+                            <div class="ai-pick-rank">#${i + 1}</div>
+                            <div class="ai-pick-stock-info">
+                                <span class="ai-pick-name">${p.name}</span>
+                                <span class="ai-pick-code">${p.code}</span>
+                            </div>
+                            <div class="ai-pick-score" style="background:${p.score >= 80 ? '#22c55e' : p.score >= 70 ? '#3b82f6' : p.score >= 60 ? '#f59e0b' : '#6b7280'}">
+                                ${p.score}分
+                            </div>
+                        </div>
+                        <div class="ai-pick-reason">💡 ${p.reason}</div>
+                        <div class="ai-pick-meta">
+                            ${entryInfo ? '<span class="ai-pick-meta-item ai-pick-meta-buy" style="font-weight:600">' + entryInfo + '</span>' : ''}
+                            <span class="ai-pick-meta-item">⏱ 持有 ${p.hold_days} 天</span>
+                            <span class="ai-pick-meta-item">🛑 止损 ${p.stop_loss}</span>
+                            <span class="ai-pick-meta-item">🎯 目标 ${p.target}</span>
+                            ${snapshot ? '<span class="ai-pick-meta-item">📊 ' + snapshot + '</span>' : ''}
+                            ${volumeInfo ? '<span class="ai-pick-meta-item">' + volumeInfo + '</span>' : ''}
+                        </div>
+                    </div>
+                    `;
+                }).join('')}
+            </div>
+        `;
+    } catch (e) {
+        detail.innerHTML = '<div style="text-align:center;color:var(--danger);padding:40px 0">加载失败: ' + e.message + '</div>';
+    }
 }
 
 async function aiQuickPick() {
@@ -1276,22 +1385,29 @@ async function aiQuickPick() {
 function renderAIQuickPickResult(data) {
     const summary = data.summary || '';
     const stocks = data.stocks || [];
+    const saved = data.saved || 0;
     
     let html = '<div style="margin-bottom:16px;padding:12px 16px;background:var(--bg-tertiary);border-radius:var(--radius);font-size:13px;color:var(--text-secondary)">' +
-        '<span style="font-weight:600;color:var(--text-primary)">市场策略: </span>' + summary + '</div>';
+        '<span style="font-weight:600;color:var(--text-primary)">市场策略: </span>' + summary;
+    if (saved > 0) {
+        html += ' <span style="font-size:11px;color:var(--success)">(已自动记录到选股记录)</span>';
+    }
+    html += '</div>';
     
     html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
     stocks.forEach((s, i) => {
         const scoreColor = s.score >= 80 ? 'var(--color-up)' : s.score >= 60 ? 'var(--warning)' : 'var(--text-muted)';
+        const entryInfo = s.entry_price ? '💰 买点: ' + s.entry_price + '' : '';
         html += '<div style="background:var(--bg-tertiary);border-radius:var(--radius);padding:14px;border-left:3px solid ' + scoreColor + '">' +
             '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px">' +
             '<div><span style="font-weight:700;font-size:15px">#' + (i+1) + ' ' + s.name + '</span><span style="color:var(--text-muted);font-size:11px;margin-left:6px">' + s.code + '</span></div>' +
             '<span style="font-size:12px;font-weight:700;color:' + scoreColor + '">' + s.score + '分</span></div>' +
             '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;line-height:1.5">' + (s.reason || '') + '</div>' +
-            '<div style="display:flex;gap:12px;font-size:11px;color:var(--text-muted)">' +
-            '<span>持仓: ' + (s.hold_days || '?') + '天</span>' +
-            '<span style="color:var(--color-down)">止损: ' + (s.stop_loss || '?') + '</span>' +
-            '<span style="color:var(--color-up)">目标: ' + (s.target || '?') + '</span>' +
+            '<div style="display:flex;gap:12px;font-size:11px;color:var(--text-muted);flex-wrap:wrap">' +
+            (entryInfo ? '<span style="font-weight:600;color:var(--primary)">' + entryInfo + '</span>' : '') +
+            '<span>⏱ ' + (s.hold_days || '?') + '天</span>' +
+            '<span style="color:var(--color-down)">🛑 ' + (s.stop_loss || '?') + '</span>' +
+            '<span style="color:var(--color-up)">🎯 ' + (s.target || '?') + '</span>' +
             '</div></div>';
     });
     html += '</div>';

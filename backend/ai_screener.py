@@ -178,6 +178,7 @@ def ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking,
       "name": "股票名称",
       "score": 评分(1-100),
       "reason": "详细买入逻辑，包含技术面、资金面、板块面三个维度的分析，80-150字",
+      "entry_price": "建议买入价区间，如 26.50-27.00 或 现价附近",
       "hold_days": "建议持有天数(1-5)",
       "stop_loss": "止损价",
       "target": "目标价"
@@ -195,16 +196,39 @@ def ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking,
         return {"success": False, "error": err}
 
     try:
-        content = data["choices"][0]["message"]["content"]
-        # 提取 JSON（处理可能的 markdown 代码块包装）
+        content = data["choices"][0]["message"]["content"].strip()
+        
+        # --- 强大的 JSON 提取逻辑 ---
+        json_str = None
+        
+        # 1. 处理 markdown 代码块
         if "```json" in content:
-            content = content.split("```json")[1].split("```")[0]
+            json_str = content.split("```json", 1)[1].split("```", 1)[0].strip()
         elif "```" in content:
-            content = content.split("```")[1].split("```")[0]
-        result = json.loads(content.strip())
+            json_str = content.split("```", 1)[1].split("```", 1)[0].strip()
+        # 2. 尝试找第一个 { 到最后一个 } 
+        elif "{" in content and "}" in content:
+            start = content.find("{")
+            end = content.rfind("}")
+            json_str = content[start:end+1].strip()
+        # 3. 纯 JSON
+        else:
+            json_str = content
+        
+        if not json_str:
+            return {"success": False, "error": "AI返回内容为空，无法解析", "raw": content[:500]}
+        
+        result = json.loads(json_str)
         return {"success": True, **result}
-    except (json.JSONDecodeError, KeyError, IndexError) as e:
-        return {"success": False, "error": f"解析失败: {e}", "raw": content}
+    except json.JSONDecodeError as e:
+        # JSON解析失败：打印部分内容方便排查
+        snippet = (json_str or content)[:300]
+        print(f"[AI] JSON解析失败: {e}")
+        print(f"[AI] 原始返回(前300字): {snippet}")
+        return {"success": False, "error": f"解析失败: {e}", "raw": snippet}
+    except (KeyError, IndexError) as e:
+        print(f"[AI] 数据结构异常: {e}, data keys: {list(data.keys()) if data else 'None'}")
+        return {"success": False, "error": f"数据结构异常: {e}"}
 
 
 def _extract_hot_stocks(quotes, sector_ranking, fund_flow):
@@ -309,12 +333,22 @@ def ai_screen(query, quotes, sentiment, sector_ranking, fund_flow, concept_ranki
 
         content = data["choices"][0]["message"]["content"]
         stocks = []
+        # 提取内嵌JSON (AI可能在markdown代码块中输出)
+        json_str = None
         if "```json" in content:
+            json_str = content.split("```json", 1)[1].split("```", 1)[0].strip()
+        elif "```" in content:
+            json_str = content.split("```", 1)[1].split("```", 1)[0].strip()
+        elif "{" in content and "}" in content:
+            start = content.find("{")
+            end = content.rfind("}")
+            json_str = content[start:end+1].strip()
+        
+        if json_str:
             try:
-                json_str = content.split("```json")[1].split("```")[0]
-                stocks = json.loads(json_str.strip()).get("stocks", [])
-            except:
-                pass
+                stocks = json.loads(json_str).get("stocks", [])
+            except json.JSONDecodeError:
+                pass  # JSON 解析失败不影响文本内容返回
 
         return {"success": True, "answer": content, "stocks": stocks}
     except Exception as e:

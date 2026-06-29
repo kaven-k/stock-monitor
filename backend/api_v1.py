@@ -539,14 +539,50 @@ def ai_screen_query():
 @api_v1.route('/ai/quick-pick', methods=['POST'])
 @login_required
 def ai_quick_pick():
-    """一键选股：AI 自动分析市场推荐8只短线标的"""
+    """一键选股：AI 自动分析市场推荐8只短线标的（结果自动落库）"""
     quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices = _gather_market_data()
     if not quotes:
         return error(50003, "暂无实时行情数据", "NO_DATA")
 
     from ai_screener import ai_quick_pick
     result = ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices)
+    
+    # 自动落库：保存选股结果，供复盘
+    if result.get('success') and result.get('stocks'):
+        try:
+            # 补充推荐时行情快照
+            for s in result['stocks']:
+                q = quotes.get(s.get('code', ''), {})
+                if q:
+                    s['rec_price'] = q.get('price', 0)
+                    s['rec_change_pct'] = q.get('change_pct', 0)
+                    s['rec_volume'] = q.get('volume', 0)
+                    s['rec_amount'] = q.get('amount_wan', 0)
+            saved = db.save_ai_picks(result['stocks'])
+            result['saved'] = saved
+        except Exception as e:
+            print(f"[AI] 保存选股记录失败: {e}")
+    
     return success(result)
+
+
+@api_v1.route('/ai/picks/dates', methods=['GET'])
+@login_required
+def ai_pick_dates():
+    """获取所有有选股记录的日期"""
+    dates = db.get_ai_pick_dates()
+    return success(dates)
+
+
+@api_v1.route('/ai/picks', methods=['GET'])
+@login_required
+def ai_picks_by_date():
+    """获取指定日期的AI选股记录"""
+    pick_date = request.args.get('date', '')
+    if not pick_date:
+        return error(40001, "请指定日期参数 ?date=YYYY-MM-DD", "INVALID_PARAM")
+    picks = db.get_ai_picks_by_date(pick_date)
+    return success(picks)
 
 
 # ============ 接口列表 ============
@@ -582,5 +618,7 @@ def api_index():
             "monitor_interval": "POST /api/v1/monitor/interval",
             "ai_screen": "POST /api/v1/ai/screen",
             "ai_quick_pick": "POST /api/v1/ai/quick-pick",
+            "ai_picks": "GET /api/v1/ai/picks?date=YYYY-MM-DD",
+            "ai_pick_dates": "GET /api/v1/ai/picks/dates",
         }
     })

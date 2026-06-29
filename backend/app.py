@@ -51,6 +51,14 @@ def create_app():
     def index():
         return send_from_directory(static_folder, 'index.html')
 
+    # 开发模式：禁用静态文件缓存（方便调试）
+    @app.after_request
+    def add_no_cache_header(response):
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
+
     # 全局错误处理
     @app.errorhandler(404)
     def not_found(e):

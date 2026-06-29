@@ -139,11 +139,36 @@ def init_db():
             expired_at TEXT NOT NULL
         );
 
+        -- AI选股记录（按日期分组，用于复盘）
+        CREATE TABLE IF NOT EXISTS ai_picks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pick_date TEXT NOT NULL,
+            code TEXT NOT NULL,
+            name TEXT NOT NULL,
+            score INTEGER DEFAULT 0,
+            reason TEXT DEFAULT '',
+            entry_price TEXT DEFAULT '',
+            hold_days INTEGER DEFAULT 3,
+            stop_loss TEXT DEFAULT '',
+            target TEXT DEFAULT '',
+            -- 推荐时行情快照（用于复盘对比）
+            rec_price REAL DEFAULT 0,
+            rec_change_pct REAL DEFAULT 0,
+            rec_volume REAL DEFAULT 0,
+            rec_amount REAL DEFAULT 0,
+            -- 复盘评估字段（后续手动/自动填写）
+            review_result TEXT DEFAULT '',
+            review_note TEXT DEFAULT '',
+            reviewed_at TEXT DEFAULT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        );
+
         -- 创建索引
         CREATE INDEX IF NOT EXISTS idx_price_history_code_date ON price_history(code, trade_date);
         CREATE INDEX IF NOT EXISTS idx_snapshots_code_ts ON price_snapshots(code, timestamp);
         CREATE INDEX IF NOT EXISTS idx_alert_logs_time ON alert_logs(triggered_at);
         CREATE INDEX IF NOT EXISTS idx_alert_logs_read ON alert_logs(is_read);
+        CREATE INDEX IF NOT EXISTS idx_ai_picks_date ON ai_picks(pick_date);
     """)
 
     conn.commit()
@@ -154,6 +179,24 @@ def init_db():
         conn.commit()
     except sqlite3.OperationalError:
         pass
+
+    # 为旧 ai_picks 表添加新字段 (v1.1 升级)
+    new_columns = [
+        ("entry_price", "TEXT DEFAULT ''"),
+        ("rec_price", "REAL DEFAULT 0"),
+        ("rec_change_pct", "REAL DEFAULT 0"),
+        ("rec_volume", "REAL DEFAULT 0"),
+        ("rec_amount", "REAL DEFAULT 0"),
+        ("review_result", "TEXT DEFAULT ''"),
+        ("review_note", "TEXT DEFAULT ''"),
+        ("reviewed_at", "TEXT DEFAULT NULL"),
+    ]
+    for col, col_type in new_columns:
+        try:
+            conn.execute(f"ALTER TABLE ai_picks ADD COLUMN {col} {col_type}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # 列已存在
 
     conn.close()
 
@@ -607,6 +650,86 @@ def is_token_blacklisted(jti):
     ).fetchone()
     conn.close()
     return row is not None
+
+
+# ============ AI选股记录 ============
+
+def save_ai_picks(picks, pick_date=None):
+    """
+    保存AI选股结果
+    picks: [{code, name, score, reason, entry_price, hold_days, stop_loss, target,
+             rec_price, rec_change_pct, rec_volume, rec_amount}, ...]
+    pick_date: 选股日期，默认今天
+    返回: 保存成功的数量
+    """
+    if not pick_date:
+        pick_date = date.today().isoformat()
+    
+    conn = get_connection()
+    try:
+        # 先删除同日旧记录（覆盖式保存）
+        conn.execute("DELETE FROM ai_picks WHERE pick_date=?", (pick_date,))
+        
+        saved = 0
+        for p in picks:
+            conn.execute(
+                """INSERT INTO ai_picks 
+                   (pick_date, code, name, score, reason, entry_price, hold_days, stop_loss, target,
+                    rec_price, rec_change_pct, rec_volume, rec_amount)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    pick_date,
+                    p.get('code', ''),
+                    p.get('name', ''),
+                    p.get('score', 0),
+                    p.get('reason', ''),
+                    str(p.get('entry_price', '')),
+                    p.get('hold_days', 3),
+                    str(p.get('stop_loss', '')),
+                    str(p.get('target', '')),
+                    p.get('rec_price', 0),
+                    p.get('rec_change_pct', 0),
+                    p.get('rec_volume', 0),
+                    p.get('rec_amount', 0),
+                )
+            )
+            saved += 1
+        conn.commit()
+        return saved
+    except Exception as e:
+        print(f"[DB] 保存AI选股记录失败: {e}")
+        return 0
+    finally:
+        conn.close()
+
+
+def get_ai_pick_dates():
+    """获取所有有选股记录的日期（用于分组列表）"""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT DISTINCT pick_date, COUNT(*) as count FROM ai_picks GROUP BY pick_date ORDER BY pick_date DESC"
+    ).fetchall()
+    conn.close()
+    return [{'date': r['pick_date'], 'count': r['count']} for r in rows]
+
+
+def get_ai_picks_by_date(pick_date):
+    """获取指定日期的AI选股记录"""
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM ai_picks WHERE pick_date=? ORDER BY score DESC",
+        (pick_date,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def delete_ai_picks_by_date(pick_date):
+    """删除指定日期的选股记录"""
+    conn = get_connection()
+    conn.execute("DELETE FROM ai_picks WHERE pick_date=?", (pick_date,))
+    conn.commit()
+    conn.close()
 
 
 if __name__ == '__main__':
