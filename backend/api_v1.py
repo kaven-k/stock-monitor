@@ -274,7 +274,8 @@ def get_alert_logs():
     limit = request.args.get('limit', 50, type=int)
     logs = db.get_recent_alerts(limit)
     unread = db.get_unread_alert_count()
-    return success({"logs": logs, "unread": unread})
+    total = db.get_alert_total_count()
+    return success({"logs": logs, "unread": unread, "total": total})
 
 
 @api_v1.route('/alerts/logs/<int:log_id>/read', methods=['POST'])
@@ -283,6 +284,14 @@ def mark_alert_read(log_id):
     """标记预警已读"""
     db.mark_alert_read(log_id)
     return success(msg="已标记")
+
+
+@api_v1.route('/alerts/logs/read-all', methods=['POST'])
+@login_required
+def mark_all_alerts_read():
+    """一键标记所有预警为已读"""
+    updated = db.mark_all_alerts_read()
+    return success(msg=f"已标记 {updated} 条预警为已读")
 
 
 # ============ 行情数据 ============
@@ -561,8 +570,28 @@ def ai_quick_pick():
             saved, session_id = db.save_ai_picks(result['stocks'])
             result['saved'] = saved
             result['session_id'] = session_id
+            
+            # 自动创建分组：以时间戳命名，将推荐股票加入监控列表和分组
+            group_time = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+            group_name = f"🤖 AI {group_time}"
+            group_id = db.create_group(group_name, color='#8b5cf6')  # 紫色标识AI分组
+            if group_id:
+                added_count = 0
+                for s in result['stocks']:
+                    code = s.get('code', '')
+                    name = s.get('name', '')
+                    if code:
+                        # 确保股票在监控列表中
+                        db.add_stock(code, name, 'A')
+                        # 加入分组
+                        db.add_to_group(group_id, code)
+                        added_count += 1
+                result['group_id'] = group_id
+                result['group_name'] = group_name
+                result['group_stocks'] = added_count
+                print(f"[AI] 自动创建分组 [{group_name}] ({group_id}), 加入 {added_count} 只股票")
         except Exception as e:
-            print(f"[AI] 保存选股记录失败: {e}")
+            print(f"[AI] 保存选股记录或创建分组失败: {e}")
     
     return success(result)
 

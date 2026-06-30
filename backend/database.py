@@ -484,12 +484,30 @@ def get_recent_alerts(limit=50):
     return [dict(r) for r in rows]
 
 
+def get_alert_total_count():
+    """获取预警记录总数"""
+    conn = get_connection()
+    row = conn.execute("SELECT COUNT(*) as cnt FROM alert_logs").fetchone()
+    conn.close()
+    return row['cnt'] if row else 0
+
+
 def mark_alert_read(log_id):
     """标记预警已读"""
     conn = get_connection()
     conn.execute("UPDATE alert_logs SET is_read=1 WHERE id=?", (log_id,))
     conn.commit()
     conn.close()
+
+
+def mark_all_alerts_read():
+    """标记所有预警为已读"""
+    conn = get_connection()
+    cur = conn.execute("UPDATE alert_logs SET is_read=1 WHERE is_read=0")
+    updated = cur.rowcount
+    conn.commit()
+    conn.close()
+    return updated
 
 
 def get_unread_alert_count():

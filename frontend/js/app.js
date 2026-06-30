@@ -811,17 +811,42 @@ async function createAlertRule() {
 }
 
 async function showAlertLogs() {
-    closeDetail();  // 关闭详情面板
-    document.getElementById('modal-alert-logs').style.display = 'flex';
+    closeDetail();
+    document.getElementById('view-title').textContent = '预警记录';
+    document.getElementById('stock-panel').style.display = 'none';
+    document.getElementById('rules-panel').style.display = 'none';
+    document.getElementById('market-panel').style.display = 'none';
+    document.getElementById('ai-panel').style.display = 'none';
+    document.getElementById('ai-picks-panel').style.display = 'none';
+    document.getElementById('toolbar-stock').style.display = 'none';
+    document.getElementById('alert-logs-panel').style.display = '';
+    
     try {
         const data = await api.getAlertLogs(100);
         const c = document.getElementById('alert-logs-content');
-        c.innerHTML = data.logs.length ? data.logs.map(log => `<div class="alert-item ${log.is_read ? '' : 'unread'}" onclick="markAlertRead(${log.id})"><div class="alert-item-header"><span class="alert-item-type ${log.alert_type}">${log.alert_type}</span><span class="alert-item-time">${log.triggered_at}</span></div><div class="alert-item-msg">${log.alert_msg}</div><div style="font-size:11px;color:var(--text-muted);margin-top:4px">${log.rule_name} | ${log.stock_name}(${log.stock_code})</div></div>`).join('') : '<div class="empty-state"><div class="text">暂无预警记录</div></div>';
+        c.innerHTML = data.logs.length
+            ? data.logs.map(log => {
+                const isUnread = !log.is_read;
+                return `<div class="alert-item${isUnread ? ' unread' : ''}" onclick="markAlertRead(${log.id}, this)">
+                    <div class="alert-item-header">
+                        <span class="alert-item-type ${log.alert_type}">${log.alert_type}</span>
+                        <span class="alert-item-time">${log.triggered_at}</span>
+                    </div>
+                    <div class="alert-item-msg">${log.alert_msg}</div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:4px">${log.rule_name} | ${log.stock_name}(${log.stock_code})</div>
+                </div>`;
+            }).join('')
+            : '<div class="empty-state" style="text-align:center;padding:80px 0;color:var(--text-muted)"><div style="font-size:48px;margin-bottom:12px">🔔</div><div>暂无预警记录</div></div>';
         updateNavCounts();
     } catch (e) { console.error(e); }
 }
 
-async function markAlertRead(id) { try { await api.markAlertRead(id); } catch (e) {} }
+async function markAlertRead(id, el) {
+    try {
+        await api.markAlertRead(id);
+        if (el) el.classList.remove('unread');
+    } catch (e) {}
+}
 
 async function updateNavCounts() {
     document.getElementById('nav-all-count').textContent = State.stocks.length;
@@ -830,7 +855,7 @@ async function updateNavCounts() {
     try {
         const data = await api.getAlertLogs(1);
         const ac = document.getElementById('nav-alert-count');
-        ac.textContent = data.unread || 0;
+        ac.textContent = data.total || 0;
         ac.style.background = data.unread > 0 ? '#fef2f2' : 'var(--bg-hover)';
         ac.style.color = data.unread > 0 ? '#ef4444' : 'var(--text-muted)';
     } catch (e) {}
@@ -867,6 +892,7 @@ function showStockView() {
     document.getElementById('market-panel').style.display = 'none';
     document.getElementById('ai-panel').style.display = 'none';
     document.getElementById('ai-picks-panel').style.display = 'none';
+    document.getElementById('alert-logs-panel').style.display = 'none';
     document.getElementById('toolbar-stock').style.display = '';
 }
 
@@ -894,6 +920,19 @@ document.addEventListener('click', e => {
     }
 });
 
+async function markAllAlertsRead() {
+    if (!confirm('确定将所有预警记录标记为已读？')) return;
+    try {
+        await api.post('/alerts/logs/read-all');
+        // 刷新列表，去掉所有 unread 样式
+        document.querySelectorAll('#alert-logs-content .alert-item.unread').forEach(el => el.classList.remove('unread'));
+        updateNavCounts();
+        showToast('已全部标记为已读', 'success');
+    } catch (e) {
+        showToast('操作失败: ' + e.message, 'error');
+    }
+}
+
 async function showRulesView() {
     closeDetail();  // 关闭详情面板
     State.currentView = 'rules';
@@ -903,6 +942,7 @@ async function showRulesView() {
     document.getElementById('market-panel').style.display = 'none';
     document.getElementById('ai-panel').style.display = 'none';
     document.getElementById('ai-picks-panel').style.display = 'none';
+    document.getElementById('alert-logs-panel').style.display = 'none';
     document.getElementById('toolbar-stock').style.display = 'none';
     await loadRulesView();
 }
@@ -1125,6 +1165,7 @@ async function showMarketView() {
     document.getElementById('market-panel').style.display = '';
     document.getElementById('ai-panel').style.display = 'none';
     document.getElementById('ai-picks-panel').style.display = 'none';
+    document.getElementById('alert-logs-panel').style.display = 'none';
     document.getElementById('toolbar-stock').style.display = 'none';
     await loadMarketData();
 }
@@ -1282,6 +1323,7 @@ function showAIView() {
     document.getElementById('market-panel').style.display = 'none';
     document.getElementById('ai-panel').style.display = '';
     document.getElementById('ai-picks-panel').style.display = 'none';
+    document.getElementById('alert-logs-panel').style.display = 'none';
     document.getElementById('view-title').textContent = 'AI 智能选股';
     document.getElementById('toolbar-stock').style.display = 'none';
     document.getElementById('stock-table').style.display = 'none';
@@ -1293,6 +1335,7 @@ function showAIPicksView() {
     document.getElementById('market-panel').style.display = 'none';
     document.getElementById('ai-panel').style.display = 'none';
     document.getElementById('ai-picks-panel').style.display = '';
+    document.getElementById('alert-logs-panel').style.display = 'none';
     document.getElementById('view-title').textContent = 'AI选股记录';
     document.getElementById('toolbar-stock').style.display = 'none';
     loadAIPickDates();
@@ -1460,6 +1503,13 @@ async function aiQuickPick() {
         
         if (res.code === 0 && res.data.success) {
             renderAIQuickPickResult(res.data);
+            // 自动刷新侧边栏分组（选股时会自动创建AI分组）
+            if (res.data.group_id) {
+                try {
+                    State.groups = await api.getGroups();
+                    renderGroups();
+                } catch (e) { /* 分组刷新失败不影响主流程 */ }
+            }
         } else {
             result.innerHTML = '<div style="color:var(--danger);padding:16px;text-align:center">' +
                 'AI 分析失败: ' + ((res.data && res.data.error) || '未知错误') + '</div>';
@@ -1476,11 +1526,17 @@ function renderAIQuickPickResult(data) {
     const summary = data.summary || '';
     const stocks = data.stocks || [];
     const saved = data.saved || 0;
+    const groupName = data.group_name || '';
+    const groupStocks = data.group_stocks || 0;
     
     let html = '<div style="margin-bottom:16px;padding:12px 16px;background:var(--bg-tertiary);border-radius:var(--radius);font-size:13px;color:var(--text-secondary)">' +
         '<span style="font-weight:600;color:var(--text-primary)">市场策略: </span>' + summary;
     if (saved > 0) {
-        html += ' <span style="font-size:11px;color:var(--success)">(已自动记录到选股记录)</span>';
+        html += ' <span style="font-size:11px;color:var(--success)">(已记录📋)</span>';
+    }
+    if (groupName) {
+        html += '<br><span style="font-size:11px;color:var(--primary)">📁 已自动创建分组「' + groupName + '」(' + groupStocks + '只)</span>';
+        html += ' <span style="font-size:10px;color:var(--text-muted)">—— 在左侧分组中查看实时涨跌，便于复盘</span>';
     }
     html += '</div>';
     

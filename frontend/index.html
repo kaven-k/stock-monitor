@@ -276,6 +276,18 @@
                     </div>
                 </div>
 
+    <!-- 预警日志面板（内嵌展示） -->
+                <div class="stock-panel" id="alert-logs-panel" style="display:none">
+                    <div style="padding:16px 20px;border-bottom:1px solid var(--border-color);display:flex;align-items:center;justify-content:space-between">
+                        <h3 style="font-size:16px;font-weight:600">⚠️ 预警记录</h3>
+                        <div style="display:flex;align-items:center;gap:12px">
+                            <button class="btn btn-sm" onclick="markAllAlertsRead()" id="btn-read-all" style="font-size:12px;padding:4px 10px;border:1px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-card);color:var(--text-primary);cursor:pointer">一键已读</button>
+                            <span style="font-size:12px;color:var(--text-muted)">点击可标记已读</span>
+                        </div>
+                    </div>
+                    <div id="alert-logs-content" style="height:calc(100vh - 180px);overflow-y:auto;padding:16px 20px"></div>
+                </div>
+
                 <div class="detail-panel collapsed" id="detail-panel">
                     <div class="detail-header">
                         <div class="detail-header-info">
@@ -358,14 +370,6 @@
         </div>
     </div>
 
-    <!-- 预警日志 -->
-    <div class="modal-overlay" id="modal-alert-logs" style="display:none">
-        <div class="modal" style="max-width:640px">
-            <div class="modal-header"><h3>预警记录</h3><button class="btn-icon" onclick="closeModal('modal-alert-logs')">✕</button></div>
-            <div class="modal-body" id="alert-logs-content" style="max-height:500px;overflow-y:auto"></div>
-        </div>
-    </div>
-
     <!-- 删除确认弹窗 -->
     <div class="modal-overlay" id="modal-confirm-delete" style="display:none">
         <div class="modal" style="max-width:400px">
@@ -429,6 +433,6 @@
 
     <script src="js/api.js?v=1.2"></script>
     <script src="js/charts.js?v=1.2"></script>
-    <script src="js/app.js?v=1.3.1"></script>
+    <script src="js/app.js?v=1.3.5"></script>
 </body>
 </html>
