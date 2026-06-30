@@ -57,6 +57,8 @@ class AlertEngine:
             "volume_ratio": self._check_volume_ratio,
             "limit_up": self._check_limit_up,
             "limit_down": self._check_limit_down,
+            "ma_signal_change": self._check_ma_signal_change,
+            "compound": self._check_compound,
         }
 
         checker = checkers.get(rule_type)
@@ -205,6 +207,52 @@ class AlertEngine:
         if limit_down > 0 and price <= limit_down:
             return (rule_id, rule_name, code, stock_name, "limit_down",
                     f"{stock_name}({code}) 跌停! 价格 {price}")
+        return None
+
+    def _check_ma_signal_change(self, rule_id, rule_name, params, code, stock_name, quote):
+        """MA信号变化（由信号引擎驱动，此处为占位检查器）"""
+        # 信号变化检测在监控循环中通过 signal_engine 实现
+        # 该规则通过 WebSocket signal_update 事件推送到前端
+        return None
+
+    def _check_compound(self, rule_id, rule_name, params, code, stock_name, quote):
+        """复合条件预警：支持 AND/OR 组合多条子规则"""
+        operator = params.get("operator", "and")
+        sub_rules = params.get("rules", [])
+        if not sub_rules:
+            return None
+
+        sub_checkers = {
+            "price_up": self._check_price_up,
+            "price_down": self._check_price_down,
+            "change_up": self._check_change_up,
+            "change_down": self._check_change_down,
+            "volume_surge": self._check_volume_surge,
+            "turnover_high": self._check_turnover_high,
+            "amplitude_high": self._check_amplitude_high,
+            "price_break_ma": self._check_price_break_ma,
+            "volume_ratio": self._check_volume_ratio,
+            "limit_up": self._check_limit_up,
+            "limit_down": self._check_limit_down,
+        }
+
+        results = []
+        for sr in sub_rules:
+            checker = sub_checkers.get(sr.get("type", ""))
+            if checker:
+                r = checker(rule_id, rule_name, sr.get("params", {}), code, stock_name, quote)
+                results.append(r is not None)
+
+        if operator == "and":
+            triggered = all(results) and len(results) > 0
+        else:
+            triggered = any(results)
+
+        if triggered:
+            sub_types = [r.get("type", "") for r in sub_rules]
+            return (rule_id, rule_name, code, stock_name, "compound",
+                    f"{stock_name}({code}) 复合条件触发: {', '.join(sub_types)}")
+
         return None
 
     def _get_avg_volume(self, code, days=20):

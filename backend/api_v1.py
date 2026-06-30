@@ -558,8 +558,9 @@ def ai_quick_pick():
                     s['rec_change_pct'] = q.get('change_pct', 0)
                     s['rec_volume'] = q.get('volume', 0)
                     s['rec_amount'] = q.get('amount_wan', 0)
-            saved = db.save_ai_picks(result['stocks'])
+            saved, session_id = db.save_ai_picks(result['stocks'])
             result['saved'] = saved
+            result['session_id'] = session_id
         except Exception as e:
             print(f"[AI] 保存选股记录失败: {e}")
     
@@ -577,12 +578,39 @@ def ai_pick_dates():
 @api_v1.route('/ai/picks', methods=['GET'])
 @login_required
 def ai_picks_by_date():
-    """获取指定日期的AI选股记录"""
+    """
+    获取AI选股记录
+    ?date=YYYY-MM-DD → 该日期所有会话
+    ?session=YYYY-MM-DD HH:MM:SS → 精确匹配该会话
+    """
     pick_date = request.args.get('date', '')
-    if not pick_date:
-        return error(40001, "请指定日期参数 ?date=YYYY-MM-DD", "INVALID_PARAM")
-    picks = db.get_ai_picks_by_date(pick_date)
+    session_id = request.args.get('session', '')
+    key = pick_date or session_id
+    if not key:
+        return error(40001, "请指定参数 ?date=YYYY-MM-DD 或 ?session=YYYY-MM-DD HH:MM:SS", "INVALID_PARAM")
+    picks = db.get_ai_picks_by_date(key)
     return success(picks)
+
+
+@api_v1.route('/ai/picks', methods=['DELETE'])
+@login_required
+def ai_picks_delete():
+    """
+    删除AI选股记录
+    ?date=YYYY-MM-DD → 删除该日期所有会话
+    ?session=YYYY-MM-DD HH:MM:SS → 删除指定会话
+    """
+    date_str = request.args.get('date', '')
+    session_id = request.args.get('session', '')
+    key = date_str or session_id
+    if not key:
+        return error(40001, "请指定参数 ?date=YYYY-MM-DD 或 ?session=YYYY-MM-DD HH:MM:SS", "INVALID_PARAM")
+    
+    if session_id:
+        db.delete_ai_picks_by_session(session_id)
+    else:
+        db.delete_ai_picks_by_date(date_str)
+    return success(None, "删除成功")
 
 
 # ============ 接口列表 ============
@@ -618,7 +646,7 @@ def api_index():
             "monitor_interval": "POST /api/v1/monitor/interval",
             "ai_screen": "POST /api/v1/ai/screen",
             "ai_quick_pick": "POST /api/v1/ai/quick-pick",
-            "ai_picks": "GET /api/v1/ai/picks?date=YYYY-MM-DD",
+            "ai_picks": "GET /api/v1/ai/picks?date=YYYY-MM-DD | ?session=YYYY-MM-DD HH:MM:SS",
             "ai_pick_dates": "GET /api/v1/ai/picks/dates",
         }
     })

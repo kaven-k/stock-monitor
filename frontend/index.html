@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>StockMonitor - 股票监控系统</title>
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/style.css?v=1.3">
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/socket.io@4.7.4/client-dist/socket.io.min.js"></script>
 </head>
@@ -331,6 +331,8 @@
                         <option value="continuous_up">连续上涨</option><option value="continuous_down">连续下跌</option>
                         <option value="volume_ratio">量比异常</option>
                         <option value="limit_up">触及涨停</option><option value="limit_down">触及跌停</option>
+                        <option value="ma_signal_change">MA信号变化</option>
+                        <option value="compound">复合条件（AND/OR组合）</option>
                     </select>
                 </div>
                 <div class="form-group"><label>参数</label><div id="alert-params"></div></div>
@@ -427,6 +429,6 @@
 
     <script src="js/api.js?v=1.2"></script>
     <script src="js/charts.js?v=1.2"></script>
-    <script src="js/app.js?v=1.2"></script>
+    <script src="js/app.js?v=1.3.1"></script>
 </body>
 </html>

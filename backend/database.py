@@ -654,22 +654,20 @@ def is_token_blacklisted(jti):
 
 # ============ AI选股记录 ============
 
-def save_ai_picks(picks, pick_date=None):
+def save_ai_picks(picks, session_id=None):
     """
-    保存AI选股结果
+    保存AI选股结果（每次选股独立保存，按时间戳区分，不覆盖）
     picks: [{code, name, score, reason, entry_price, hold_days, stop_loss, target,
              rec_price, rec_change_pct, rec_volume, rec_amount}, ...]
-    pick_date: 选股日期，默认今天
-    返回: 保存成功的数量
+    session_id: 选股会话ID，默认当前时间戳 "YYYY-MM-DD HH:MM:SS"
+    返回: (保存数量, session_id)
     """
-    if not pick_date:
-        pick_date = date.today().isoformat()
+    if not session_id:
+        session_id = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     conn = get_connection()
     try:
-        # 先删除同日旧记录（覆盖式保存）
-        conn.execute("DELETE FROM ai_picks WHERE pick_date=?", (pick_date,))
-        
+        # 不再删除旧记录！每次选股独立保存
         saved = 0
         for p in picks:
             conn.execute(
@@ -678,7 +676,7 @@ def save_ai_picks(picks, pick_date=None):
                     rec_price, rec_change_pct, rec_volume, rec_amount)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    pick_date,
+                    session_id,
                     p.get('code', ''),
                     p.get('name', ''),
                     p.get('score', 0),
@@ -695,39 +693,79 @@ def save_ai_picks(picks, pick_date=None):
             )
             saved += 1
         conn.commit()
-        return saved
+        return (saved, session_id)
     except Exception as e:
         print(f"[DB] 保存AI选股记录失败: {e}")
-        return 0
+        return (0, session_id)
     finally:
         conn.close()
 
 
 def get_ai_pick_dates():
-    """获取所有有选股记录的日期（用于分组列表）"""
+    """
+    获取选股记录，按「日期 → 会话」两级分组
+    返回: [{date: "2026-06-30", sessions: [{session: "2026-06-30 14:30:25", count: 5}, ...], total_count: 8}, ...]
+    """
     conn = get_connection()
     rows = conn.execute(
-        "SELECT DISTINCT pick_date, COUNT(*) as count FROM ai_picks GROUP BY pick_date ORDER BY pick_date DESC"
+        "SELECT pick_date, COUNT(*) as count FROM ai_picks GROUP BY pick_date ORDER BY pick_date DESC"
     ).fetchall()
     conn.close()
-    return [{'date': r['pick_date'], 'count': r['count']} for r in rows]
+    
+    # 按日期分组聚合会话
+    date_groups = {}
+    for r in rows:
+        session = r['pick_date']
+        date_key = session[:10]  # 前10位是日期 "2026-06-30"
+        if date_key not in date_groups:
+            date_groups[date_key] = {'date': date_key, 'sessions': [], 'total_count': 0}
+        date_groups[date_key]['sessions'].append({
+            'session': session,
+            'count': r['count'],
+            'time': session[11:19] if len(session) > 11 else ''  # HH:MM:SS
+        })
+        date_groups[date_key]['total_count'] += r['count']
+    
+    # 日期倒序排列
+    return sorted(date_groups.values(), key=lambda g: g['date'], reverse=True)
 
 
-def get_ai_picks_by_date(pick_date):
-    """获取指定日期的AI选股记录"""
+def get_ai_picks_by_date(date_or_session):
+    """
+    获取选股记录
+    - 传入完整会话ID (如 "2026-06-30 14:30:25") → 精确匹配该会话
+    - 传入日期 (如 "2026-06-30") → 匹配该日期所有会话
+    返回: [{...pick记录...}, ...]
+    """
     conn = get_connection()
-    rows = conn.execute(
-        "SELECT * FROM ai_picks WHERE pick_date=? ORDER BY score DESC",
-        (pick_date,)
-    ).fetchall()
+    if ' ' in date_or_session:
+        # 完整时间戳，精确匹配
+        rows = conn.execute(
+            "SELECT * FROM ai_picks WHERE pick_date=? ORDER BY score DESC",
+            (date_or_session,)
+        ).fetchall()
+    else:
+        # 纯日期，模糊匹配所有该日期的会话
+        rows = conn.execute(
+            "SELECT * FROM ai_picks WHERE pick_date LIKE ? ORDER BY pick_date DESC, score DESC",
+            (date_or_session + '%',)
+        ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
-def delete_ai_picks_by_date(pick_date):
-    """删除指定日期的选股记录"""
+def delete_ai_picks_by_date(date_str):
+    """删除指定日期的所有选股记录（所有会话）"""
     conn = get_connection()
-    conn.execute("DELETE FROM ai_picks WHERE pick_date=?", (pick_date,))
+    conn.execute("DELETE FROM ai_picks WHERE pick_date LIKE ?", (date_str + '%',))
+    conn.commit()
+    conn.close()
+
+
+def delete_ai_picks_by_session(session_id):
+    """删除指定选股会话的所有记录"""
+    conn = get_connection()
+    conn.execute("DELETE FROM ai_picks WHERE pick_date=?", (session_id,))
     conn.commit()
     conn.close()
 

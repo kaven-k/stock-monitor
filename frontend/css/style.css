@@ -600,6 +600,42 @@ input, select, textarea, button { font-family: inherit; font-size: inherit; }
 @media (max-width: 1200px) { .sidebar { width: 200px; } .detail-panel { width: 340px; } }
 
 /* ====== AI 选股记录 ====== */
+.ai-pick-date-group {
+    margin-bottom: 8px;
+}
+.ai-pick-date-header {
+    padding: 8px 12px;
+    font-weight: 600;
+    font-size: 13px;
+    background: var(--bg-hover);
+    border-bottom: 2px solid var(--primary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: default;
+}
+.ai-pick-sessions {
+    padding: 2px 0;
+}
+.ai-pick-session-item {
+    padding: 6px 12px 6px 24px;
+    cursor: pointer;
+    transition: all 0.12s ease;
+    font-size: 12px;
+    border-left: 3px solid transparent;
+    color: var(--text-secondary);
+}
+.ai-pick-session-item:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+.ai-pick-session-item.active {
+    background: var(--primary-light);
+    border-left-color: var(--primary);
+    color: var(--primary);
+    font-weight: 600;
+}
+
 .ai-pick-date-item {
     padding: 12px 16px;
     cursor: pointer;
@@ -689,6 +725,8 @@ input, select, textarea, button { font-family: inherit; font-size: inherit; }
 /* 深色主题适配 */
 [data-theme="dark"] .ai-pick-card { border-color: var(--border-color); }
 [data-theme="dark"] .ai-pick-date-item.active { background: rgba(59,130,246,0.1); }
+[data-theme="dark"] .ai-pick-session-item.active { background: rgba(59,130,246,0.12); }
+[data-theme="dark"] .ai-pick-date-header { background: rgba(59,130,246,0.05); }
 [data-theme="dark"] .ai-pick-card:nth-child(1) .ai-pick-rank { background: rgba(251,191,36,0.15); }
 [data-theme="dark"] .ai-pick-card:nth-child(2) .ai-pick-rank { background: rgba(107,114,128,0.15); }
 [data-theme="dark"] .ai-pick-card:nth-child(3) .ai-pick-rank { background: rgba(220,38,38,0.15); }

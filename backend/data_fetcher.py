@@ -566,6 +566,77 @@ def get_technical_indicators(data):
     # KDJ
     result.update(calculate_kdj(data))
     
+    # VWMA (成交量加权均线)
+    result["vwma20"] = calculate_vwma(data, 20)
+    
+    # ATR (平均真实波幅)
+    result["atr14"] = calculate_atr(data, 14)
+    
+    return result
+
+
+# ============ VWMA 成交量加权均线 ============
+
+def calculate_vwma(data, period=20):
+    """
+    成交量加权移动均线
+    VWMA = Σ(收盘价 × 成交量) / Σ(成交量)
+    成交量大的K线权重更高，更真实反映主力成本
+    data: [{close, volume}, ...]
+    返回: [vwma, ...] 前 period-1 个为 None
+    """
+    result = []
+    for i in range(len(data)):
+        if i < period - 1:
+            result.append(None)
+            continue
+        total_weight = 0
+        total_value = 0
+        for j in range(i - period + 1, i + 1):
+            vol = data[j].get('volume', 0)
+            close = data[j].get('close', 0)
+            total_weight += vol
+            total_value += close * vol
+        if total_weight > 0:
+            result.append(round(total_value / total_weight, 2))
+        else:
+            result.append(None)
+    return result
+
+
+# ============ ATR 平均真实波幅 ============
+
+def calculate_atr(data, period=14):
+    """
+    平均真实波幅 (Average True Range)
+    TR = max(high-low, |high-prev_close|, |low-prev_close|)
+    ATR = TR 的 period 周期移动平均
+    用于动态止损/止盈：止损 = 入口价 - N×ATR
+    
+    data: [{high, low, close}, ...]
+    返回: [atr, ...] 前 period 个为 None
+    """
+    tr_list = []
+    for i in range(len(data)):
+        high = data[i].get('high', data[i].get('close', 0))
+        low = data[i].get('low', data[i].get('close', 0))
+        prev_close = data[i-1].get('close', data[i].get('close', 0)) if i > 0 else data[i].get('close', 0)
+        
+        tr = max(
+            high - low,
+            abs(high - prev_close),
+            abs(low - prev_close)
+        )
+        tr_list.append(tr)
+    
+    # 计算 period 周期移动平均
+    result = []
+    for i in range(len(tr_list)):
+        if i < period - 1:
+            result.append(None)
+            continue
+        avg = sum(tr_list[i - period + 1 : i + 1]) / period
+        result.append(round(avg, 2))
     return result
 
 

@@ -246,6 +246,28 @@ function initSocket() {
             updateNavCounts();
         }
     });
+    socket.on('signal_update', data => {
+        if (data.signals?.length > 0) {
+            // 在股票表格中闪烁信号变化的股票行
+            data.signals.forEach(s => {
+                const row = document.querySelector(`tr[data-code="${s.code}"]`);
+                if (row) {
+                    row.style.transition = 'background 0.3s';
+                    row.style.background = s.level === 'strong_buy' || s.level === 'buy'
+                        ? 'rgba(235,80,50,0.08)'
+                        : s.level === 'strong_sell' || s.level === 'sell'
+                            ? 'rgba(47,158,68,0.08)'
+                            : 'rgba(59,130,246,0.08)';
+                    setTimeout(() => { row.style.background = ''; }, 3000);
+                }
+            });
+            // 在右下角弹窗提示（仅强烈信号）
+            const strongSignals = data.signals.filter(s => s.level === 'strong_buy' || s.level === 'strong_sell');
+            if (strongSignals.length > 0) {
+                showSignalPopup(strongSignals);
+            }
+        }
+    });
     socket.on('disconnect', () => {
         console.log('[Socket] 已断开');
         showToast('实时连接已断开，尝试重连...', 'warning');
@@ -753,6 +775,8 @@ function onAlertTypeChange() {
         volume_ratio: '<input type="number" class="form-input" id="param-threshold" placeholder="量比阈值" step="0.1" value="2">',
         limit_up: '<div style="color:var(--text-muted);font-size:12px">触及涨停时触发</div>',
         limit_down: '<div style="color:var(--text-muted);font-size:12px">触及跌停时触发</div>',
+        ma_signal_change: '<div style="color:var(--text-muted);font-size:12px">AI信号引擎检测到强烈买卖信号变化时触发</div>',
+        compound: '<div style="color:var(--text-muted);font-size:12px">🔧 复合规则需在JSON编辑器中手动配置params: {"operator":"and","rules":[{"type":"change_up","params":{"threshold":3}},{"type":"volume_ratio","params":{"threshold":1.5}}]}</div>',
     };
     document.getElementById('alert-params').innerHTML = configs[type] || '';
 }
@@ -768,6 +792,7 @@ async function createAlertRule() {
         volume_surge: ['multiplier', 'avg_days'], turnover_high: ['threshold'], amplitude_high: ['threshold'],
         price_break_ma: ['direction', 'ma_period'], continuous_up: ['days'], continuous_down: ['days'],
         volume_ratio: ['threshold'], limit_up: [], limit_down: [],
+        ma_signal_change: [], compound: [],
     };
     const params = {};
     (paramKeys[ruleType] || []).forEach(k => { const el = document.getElementById(`param-${k}`); if (el) params[k] = el.value; });
@@ -819,6 +844,19 @@ function showAlertPopup(alerts) {
         p.innerHTML = `<div class="alert-popup-header">⚠️ ${a.type}<span class="alert-popup-close" onclick="this.closest('.alert-popup').remove()">✕</span></div><div style="font-size:12px">${a.msg}</div><div style="font-size:11px;color:var(--text-muted);margin-top:4px">${a.time}</div>`;
         container.appendChild(p);
         setTimeout(() => p.remove(), 8000);
+    });
+}
+
+function showSignalPopup(signals) {
+    const container = document.getElementById('alert-popup-container');
+    signals.forEach(s => {
+        const p = document.createElement('div');
+        const icon = s.level === 'strong_buy' ? '📈' : '📉';
+        const color = s.level === 'strong_buy' ? 'var(--color-up)' : 'var(--color-down)';
+        p.className = 'alert-popup';
+        p.innerHTML = `<div class="alert-popup-header" style="color:${color}">${icon} 信号变化 — ${s.name}(${s.code})<span class="alert-popup-close" onclick="this.closest('.alert-popup').remove()">✕</span></div><div style="font-size:12px">${s.level_text}</div><div style="font-size:11px;color:var(--text-muted);margin-top:4px">评分: ${s.score} | 价格: ¥${s.price} ${s.change_pct >= 0 ? '+' : ''}${s.change_pct}%</div>`;
+        container.appendChild(p);
+        setTimeout(() => p.remove(), 10000);
     });
 }
 
@@ -1051,6 +1089,7 @@ async function updateAlertRule(ruleId) {
         volume_surge: ['multiplier', 'avg_days'], turnover_high: ['threshold'], amplitude_high: ['threshold'],
         price_break_ma: ['direction', 'ma_period'], continuous_up: ['days'], continuous_down: ['days'],
         volume_ratio: ['threshold'], limit_up: [], limit_down: [],
+        ma_signal_change: [], compound: [],
     };
     const params = {};
     (paramKeys[ruleType] || []).forEach(k => { const el = document.getElementById(`param-${k}`); if (el) params[k] = el.value; });
@@ -1273,32 +1312,61 @@ async function loadAIPickDates() {
             return;
         }
         
-        dateList.innerHTML = data.data.map((d, i) => `
-            <div class="ai-pick-date-item${i === 0 ? ' active' : ''}" onclick="loadAIPicksByDate('${d.date}', this)" data-date="${d.date}">
-                <div style="font-weight:600;font-size:13px">📅 ${d.date}</div>
-                <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${d.count} 只推荐股票</div>
-            </div>
-        `).join('');
+        // 构建日期→会话两级列表
+        dateList.innerHTML = data.data.map((dateGroup, di) => {
+            const sessionsHtml = dateGroup.sessions.map((s, si) => `
+                <div class="ai-pick-session-item${di === 0 && si === 0 ? ' active' : ''}" 
+                     onclick="event.stopPropagation(); loadAIPicksByDate('${dateGroup.date}', '${s.session}', this, '${s.time}')"
+                     data-session="${s.session}" data-date="${dateGroup.date}">
+                    <span style="font-size:12px">🕐 ${s.time}</span>
+                    <span style="font-size:10px;color:var(--text-muted);margin-left:4px">${s.count}只</span>
+                </div>
+            `).join('');
+            
+            // 删除功能：点击日期右侧的删除按钮
+            const delBtn = `<span style="cursor:pointer;font-size:12px;opacity:0.5;float:right" 
+                onclick="event.stopPropagation(); deleteAIPickDate('${dateGroup.date}', event)" title="删除该日所有记录">🗑</span>`;
+            
+            return `
+            <div class="ai-pick-date-group" style="margin-bottom:4px">
+                <div class="ai-pick-date-header" style="padding:8px 12px;font-weight:600;font-size:13px;background:var(--bg-hover);display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid var(--primary)">
+                    <span>📅 ${dateGroup.date}</span>
+                    <span style="display:flex;align-items:center;gap:8px">
+                        <span style="font-size:10px;color:var(--text-muted)">${dateGroup.sessions.length}次选股·${dateGroup.total_count}只</span>
+                        <span style="cursor:pointer;font-size:12px;opacity:0.4;transition:opacity 0.2s" 
+                            onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.4'"
+                            onclick="event.stopPropagation(); deleteAIPickDate('${dateGroup.date}', event)" title="删除该日所有记录">🗑</span>
+                    </span>
+                </div>
+                <div class="ai-pick-sessions" style="padding:2px 0">
+                    ${sessionsHtml}
+                </div>
+            </div>`;
+        }).join('');
         
-        // 自动加载最新一条
-        if (data.data.length > 0) {
-            loadAIPicksByDate(data.data[0].date, dateList.querySelector('.ai-pick-date-item'));
+        // 自动加载最新一次选股
+        if (data.data.length > 0 && data.data[0].sessions.length > 0) {
+            const firstSession = data.data[0].sessions[0];
+            loadAIPicksByDate(data.data[0].date, firstSession.session, 
+                dateList.querySelector('.ai-pick-session-item'), firstSession.time);
         }
     } catch (e) {
-        dateList.innerHTML = '<div style="padding:12px;text-align:center;color:var(--danger);font-size:13px">加载失败</div>';
+        dateList.innerHTML = '<div style="padding:12px;text-align:center;color:var(--danger);font-size:13px">加载失败: ' + e.message + '</div>';
     }
 }
 
-async function loadAIPicksByDate(pickDate, dateItemEl) {
-    // 高亮选中日期
-    document.querySelectorAll('.ai-pick-date-item').forEach(el => el.classList.remove('active'));
-    if (dateItemEl) dateItemEl.classList.add('active');
+async function loadAIPicksByDate(dateStr, sessionId, sessionItemEl, timeLabel) {
+    // 高亮选中的会话
+    document.querySelectorAll('.ai-pick-session-item').forEach(el => el.classList.remove('active'));
+    if (sessionItemEl) sessionItemEl.classList.add('active');
     
     const detail = document.getElementById('ai-picks-detail');
     detail.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:40px 0">加载中...</div>';
     
     try {
-        const resp = await fetch(`${API_BASE}/ai/picks?date=${pickDate}`, {
+        // 用 session 参数精确匹配
+        const encodedSession = encodeURIComponent(sessionId);
+        const resp = await fetch(`${API_BASE}/ai/picks?session=${encodedSession}`, {
             headers: { 'Authorization': `Bearer ${api.token}` }
         });
         const data = await resp.json();
@@ -1310,10 +1378,11 @@ async function loadAIPicksByDate(pickDate, dateItemEl) {
         const picks = data.data;
         const total = picks.reduce((s, p) => s + p.score, 0);
         const avg = Math.round(total / picks.length);
+        const displayTime = timeLabel || sessionId.substring(11, 19);
         
         detail.innerHTML = `
             <div style="margin-bottom:16px">
-                <h3 style="font-size:15px;font-weight:600;margin:0 0 4px 0">📅 ${pickDate} AI选股结果</h3>
+                <h3 style="font-size:15px;font-weight:600;margin:0 0 4px 0">📅 ${dateStr} 🕐 ${displayTime} AI选股</h3>
                 <div style="font-size:12px;color:var(--text-muted)">共 ${picks.length} 只推荐 | 平均评分 ${avg} 分</div>
             </div>
             <div style="display:grid;gap:12px">
@@ -1349,6 +1418,27 @@ async function loadAIPicksByDate(pickDate, dateItemEl) {
         `;
     } catch (e) {
         detail.innerHTML = '<div style="text-align:center;color:var(--danger);padding:40px 0">加载失败: ' + e.message + '</div>';
+    }
+}
+
+// 删除指定日期的所有选股记录
+async function deleteAIPickDate(dateStr, event) {
+    if (event) {
+        event.stopPropagation();
+        event.preventDefault();
+    }
+    if (!confirm(`确定要删除 ${dateStr} 全部选股记录吗？\n此操作不可恢复。`)) return;
+    
+    try {
+        const resp = await fetch(`${API_BASE}/ai/picks?date=${dateStr}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${api.token}` }
+        });
+        if (resp.ok) {
+            loadAIPickDates(); // 刷新列表
+        }
+    } catch (e) {
+        alert('删除失败: ' + e.message);
     }
 }
 

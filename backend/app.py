@@ -131,10 +131,22 @@ def exec_loop_with_socketio(sio):
     
     alert_engine = AlertEngine(db_module)
     last_quotes = {}
-    last_fs_notify = {}  # 防重复通知: {rule_id_stock_code: 上次通知时间}
-    alert_cooldown = {}  # 预警去重: {rule_id_code: (上次价格, 上次时间)}，价格变化超阈值才重新触发
+    last_fs_notify = {}  # 防重复通知
+    alert_cooldown = {}  # 预警去重
     
-    print("[Monitor] 监控循环启动 (已关联监控状态 + 飞书通知)")
+    # === 性能优化：历史数据预缓存（先获取stocks列表）===
+    import signal_engine
+    stocks = get_all_stocks()
+    if stocks:
+        cached = signal_engine.load_history_cache(db_module, [s['code'] for s in stocks])
+        print(f"[Monitor] 历史数据缓存就绪: {cached}/{len(stocks)} 只")
+    
+    # === 信号引擎（多指标共振分析）===
+    sig_engine = signal_engine.SignalEngine()
+    last_signals = {}  # {code: score} 用于检测信号变化
+    signal_cycle = 0   # 信号分析周期计数（每60次循环 ≈ 5分钟）
+    
+    print("[Monitor] 监控循环启动 (已关联监控状态 + 飞书通知 + 信号引擎)")
     
     while monitor_state.is_running():
         try:
@@ -213,6 +225,71 @@ def exec_loop_with_socketio(sio):
                         })
                 except Exception as e:
                     print(f"[SocketIO Error] {e}")
+                
+                # === 信号引擎：每60次循环 ≈ 每5分钟分析一次 ===
+                signal_cycle += 1
+                if signal_cycle >= 60:
+                    signal_cycle = 0
+                    try:
+                        # 1. 更新历史数据缓存
+                        for code, q in quotes.items():
+                            bar = {
+                                'trade_date': now.strftime('%Y-%m-%d'),
+                                'open': q.get('open', q.get('price', 0)),
+                                'high': q.get('high', q.get('price', 0)),
+                                'low': q.get('low', q.get('price', 0)),
+                                'close': q.get('price', 0),
+                                'volume': q.get('volume', 0),
+                            }
+                            signal_engine.update_history_cache(code, bar)
+                        
+                        # 2. 从缓存中取K线数据进行分析
+                        kline_map = {}
+                        for code in codes:
+                            hist = signal_engine.get_cached_history(code)
+                            if hist and len(hist) >= 60:
+                                # 统一字段名 trade_date → date
+                                for h in hist:
+                                    if 'trade_date' in h and 'date' not in h:
+                                        h['date'] = h['trade_date']
+                                kline_map[code] = hist
+                        
+                        # 3. 批量分析
+                        sig_results = sig_engine.bulk_analyze(kline_map)
+                        
+                        # 4. 检测信号变化并推送
+                        signal_changes = []
+                        for code, result in sig_results.items():
+                            prev_score = last_signals.get(code, 0)
+                            new_score = result.get('score', 0)
+                            prev_level = last_signals.get(f'{code}_level', 'neutral')
+                            new_level = result.get('level', 'neutral')
+                            
+                            # 信号等级变化 或 分数变化超25分
+                            if prev_level != new_level or abs(new_score - prev_score) >= 25:
+                                result['code'] = code
+                                result['name'] = quotes.get(code, {}).get('name', '')
+                                result['price'] = quotes.get(code, {}).get('price', 0)
+                                result['change_pct'] = quotes.get(code, {}).get('change_pct', 0)
+                                signal_changes.append(result)
+                                last_signals[code] = new_score
+                                last_signals[f'{code}_level'] = new_level
+                        
+                        if signal_changes:
+                            sio.emit('signal_update', {
+                                'signals': signal_changes,
+                                'time': now.strftime('%H:%M:%S'),
+                            })
+                            # 检查 ma_signal_change 预警规则
+                            from alert_engine import AlertEngine as AE
+                            for sc in signal_changes:
+                                if sc['level'] in ('strong_buy', 'strong_sell'):
+                                    print(f"[Signal] {sc['name']}({sc['code']}) {sc['level_text']} (评分:{sc['score']})")
+                    except Exception as e:
+                        print(f"[Signal Engine Error] {e}")
+                        import traceback
+                        traceback.print_exc()
+                # === 信号引擎结束 ===
                 
                 if now.minute == 0:
                     cleanup_old_snapshots(24)
