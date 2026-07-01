@@ -133,6 +133,11 @@
                 </table>
 
                 <p style="margin-top:20px"><span class="method method-delete">DELETE</span><strong>/stocks/{code}</strong> <span class="badge badge-blue">需认证</span> — 删除股票</p>
+
+                <p style="margin-top:20px"><span class="method method-put">PUT</span><strong>/stocks/{code}/tags</strong> <span class="badge badge-blue">需认证</span> — 更新单只股票标签</p>
+                <table class="param-table"><tr><td>tags</td><td>标签字符串（逗号分隔）</td><td>是</td></tr></table>
+
+                <p style="margin-top:20px"><span class="method method-post">POST</span><strong>/stocks/retag</strong> <span class="badge badge-blue">需认证</span> — 一键为所有股票重新打标签</p>
             </div>
         </div>
 
@@ -185,6 +190,7 @@
                 </table>
                 <p style="margin-top:20px"><span class="method method-get">GET</span><strong>/alerts/logs?limit=50</strong> <span class="badge badge-blue">需认证</span> — 获取预警日志</p>
                 <p style="margin-top:12px"><span class="method method-post">POST</span><strong>/alerts/logs/{id}/read</strong> <span class="badge badge-blue">需认证</span> — 标记已读</p>
+                <p style="margin-top:12px"><span class="method method-post">POST</span><strong>/alerts/logs/read-all</strong> <span class="badge badge-blue">需认证</span> — 一键标记全部已读</p>
             </div>
         </div>
 
