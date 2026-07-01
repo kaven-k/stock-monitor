@@ -9,6 +9,7 @@ AI 选股引擎 v1.0
 import json
 import time
 import requests
+import os
 from datetime import datetime
 from config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_BASE_URL
 
@@ -21,6 +22,7 @@ SHORT_TERM_PROFILE = """
 - 偏好: 强势股突破、热门板块轮动、资金驱动型
 - 风控: 严格止损（-5%无条件离场），不恋战
 - 选股逻辑: 追涨不追高，关注资金异动和板块联动
+- ⚠️ 重要限制: 用户无科创板权限，不能推荐 688xxx 开头的科创板股票
 """
 
 
@@ -155,6 +157,7 @@ def ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking,
 
 【你的任务】
 请从候选池中精选8只最适合短线（1-5天持有）操作的股票。
+⚠️ 严禁推荐688xxx开头的科创板股票！！！
 
 候选池中标明了每只股票的涨跌停状态（⚠️已涨停/接近涨停/已跌停等），请你根据实际情况灵活判断：
 - 已涨停的股票：如果封单够强、板块持续发酵，次日的溢价空间可能很大（打板策略）。但如果板块后劲不足、封单薄弱，则风险极高。需要结合板块强度和资金面综合判断。
@@ -170,6 +173,7 @@ def ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking,
 6. 优先选择市场主线板块中的标的
 
 【输出格式】严格按以下JSON格式输出，不要包含任何其他文字：
+⚠️ 极其重要：JSON中所有字符串的值（包括summary、reason、entry_price、stop_loss、target等）绝对不允许出现英文双引号(")字符！若有引用需求，请用单引号(')或中文引号「」替代。例如：写 'MACD金叉' 或 「资金流入」 而不是 "MACD金叉"。
 {{
   "summary": "一句话总结当前市场环境和核心策略",
   "stocks": [
@@ -191,7 +195,7 @@ def ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking,
         {"role": "user", "content": "请严格按照JSON格式输出8只最佳短线标的，不要输出任何其他内容。"},
     ]
 
-    data, err = _call_deepseek(messages, temperature=0.6, max_tokens=4096)
+    data, err = _call_deepseek(messages, temperature=0.6, max_tokens=32768)
     if err:
         return {"success": False, "error": err}
 
@@ -219,12 +223,25 @@ def ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking,
             return {"success": False, "error": "AI返回内容为空，无法解析", "raw": content[:500]}
         
         result = json.loads(json_str)
+        # 安全过滤：剔除科创板 688xxx 股票（用户无权限买入）
+        if result.get("stocks"):
+            result["stocks"] = [s for s in result["stocks"] if not s.get("code", "").startswith("688")]
         return {"success": True, **result}
     except json.JSONDecodeError as e:
-        # JSON解析失败：打印部分内容方便排查
-        snippet = (json_str or content)[:300]
+        # JSON解析失败：保存原始内容以便调试
+        snippet = (json_str or content)[:800]
         print(f"[AI] JSON解析失败: {e}")
-        print(f"[AI] 原始返回(前300字): {snippet}")
+        print(f"[AI] 原始返回(前800字): {snippet}")
+        # 保存到文件以便调试
+        debug_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai_debug_last.json")
+        try:
+            with open(debug_path, "w", encoding="utf-8") as f:
+                f.write(f"ERROR: {e}\n\n")
+                f.write(f"JSON_STR:\n{json_str}\n\n")
+                f.write(f"CONTENT:\n{content}")
+            print(f"[AI] 调试信息已保存到: {debug_path}")
+        except Exception as save_err:
+            print(f"[AI] 保存调试信息失败: {save_err}")
         return {"success": False, "error": f"解析失败: {e}", "raw": snippet}
     except (KeyError, IndexError) as e:
         print(f"[AI] 数据结构异常: {e}, data keys: {list(data.keys()) if data else 'None'}")
@@ -244,18 +261,23 @@ def _extract_hot_stocks(quotes, sector_ranking, fund_flow):
             if lc and lc != "-":
                 leader_codes.add(lc)
 
-    # 精选：领涨股 + 涨幅前20 + 成交额前15（扩大范围覆盖全市场）
-    hot_codes = set(leader_codes)
+    # 精选：领涨股 + 涨幅前20 + 成交额前15（扩大范围覆盖全市场，排除科创板）
+    hot_codes = set()
+    for code in leader_codes:
+        if not code.startswith('688'):
+            hot_codes.add(code)
     sorted_by_change = sorted(quotes.items(), key=lambda x: x[1].get("change_pct", 0), reverse=True)
     for code, _ in sorted_by_change[:20]:
-        hot_codes.add(code)
+        if not code.startswith('688'):
+            hot_codes.add(code)
     sorted_by_amount = sorted(quotes.items(), key=lambda x: x[1].get("amount_wan", 0), reverse=True)
     for code, _ in sorted_by_amount[:15]:
-        hot_codes.add(code)
+        if not code.startswith('688'):
+            hot_codes.add(code)
 
-    # 格式化（最多50只，标注板块龙头和涨跌停状态）
+    # 格式化（最多35只，标注板块龙头和涨跌停状态）
     lines = []
-    for code in list(hot_codes)[:50]:
+    for code in list(hot_codes)[:35]:
         q = quotes.get(code, {})
         if not q:
             continue
@@ -313,6 +335,8 @@ def ai_screen(query, quotes, sentiment, sector_ranking, fund_flow, concept_ranki
 
 【重要】你的分析基于全市场实时数据，包括所有板块龙头和活跃标的，不局限于用户监控列表。
 选股时务必优先考虑当前市场主线板块的龙头股。
+⚠️ 严禁推荐688xxx开头的科创板股票！！！
+⚠️ 所有字符串值中严禁使用英文双引号("), 统一用单引号(')替代。若需引号，用中文引号「」替代。
 
 【输出要求】
 1. 先给出你的分析和结论
@@ -347,6 +371,8 @@ def ai_screen(query, quotes, sentiment, sector_ranking, fund_flow, concept_ranki
         if json_str:
             try:
                 stocks = json.loads(json_str).get("stocks", [])
+                # 安全过滤：剔除科创板 688xxx 股票
+                stocks = [s for s in stocks if not s.get("code", "").startswith("688")]
             except json.JSONDecodeError:
                 pass  # JSON 解析失败不影响文本内容返回
 

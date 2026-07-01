@@ -502,13 +502,13 @@ def _gather_market_data():
     concept_ranking = get_sector_ranking("concept", 20)
     fund_flow = get_sector_fund_flow("all", 20)
 
-    # 收集板块龙头股票代码（全市场，不只监控的股票）
+    # 收集板块龙头股票代码（全市场，不只监控的股票，排除科创板688xxx）
     leader_codes = set()
     for ranking in [sector_ranking, concept_ranking]:
         if ranking and ranking.get("top"):
             for r in ranking["top"]:
                 lc = r.get("leader_code", "")
-                if lc and lc != "-":
+                if lc and lc != "-" and not lc.startswith("688"):
                     leader_codes.add(lc)
 
     # 批量获取龙头股行情（不在已有quotes中的）
