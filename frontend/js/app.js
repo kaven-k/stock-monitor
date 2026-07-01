@@ -307,6 +307,24 @@ async function toggleMonitor() {
     }
 }
 
+// ====== 一键打标签 ======
+async function retagAll() {
+    document.getElementById('modal-confirm-retag').style.display = 'flex';
+}
+
+async function doRetagAll() {
+    closeModal('modal-confirm-retag');
+    try {
+        const result = await api.retagAllStocks();
+        showToast(result.msg || `已更新 ${result.tagged}/${result.total} 只股票标签`, 'success');
+        // 刷新股票列表以显示新标签
+        State.stocks = await api.getStocks();
+        renderStockTable();
+    } catch (e) {
+        showToast('打标签失败: ' + e.message, 'error');
+    }
+}
+
 // ====== 倒计时 ======
 function startCountdown() {
     if (countdownTimer) clearInterval(countdownTimer);
@@ -686,7 +704,25 @@ function renderIndicatorCharts() {
 function renderGroups() {
     const c = document.getElementById('group-list');
     if (!c) return;
-    c.innerHTML = State.groups.length ? State.groups.map(g => `<div class="sidebar-item" data-group-id="${g.id}" onclick="switchGroupView(${g.id})"><span class="dot" style="background:${g.color}"></span><span>${g.name}</span><span class="count">${(g.members||[]).length}</span></div>`).join('') : '<div style="padding:8px 12px;font-size:12px;color:var(--text-muted)">暂无分组</div>';
+    c.innerHTML = State.groups.length ? State.groups.map(g => `<div class="sidebar-item" data-group-id="${g.id}" onclick="switchGroupView(${g.id})"><span class="dot" style="background:${g.color}"></span><span>${g.name}</span><span class="count">${(g.members||[]).length}</span><span class="group-delete-btn" onclick="event.stopPropagation();showDeleteGroupConfirm(${g.id},'${g.name.replace(/'/g,"\\'")}')" title="删除分组">🗑️</span></div>`).join('') : '<div style="padding:8px 12px;font-size:12px;color:var(--text-muted)">暂无分组</div>';
+}
+
+function showDeleteGroupConfirm(groupId, groupName) {
+    document.getElementById('delete-group-name').textContent = groupName;
+    document.getElementById('btn-confirm-delete-group').onclick = async function() {
+        try {
+            await api.deleteGroup(groupId);
+            State.groups = State.groups.filter(g => g.id != groupId);
+            renderGroups();
+            closeModal('modal-confirm-delete-group');
+            showStockView();
+            renderStockTable();
+            showToast('分组已删除', 'success');
+        } catch (e) {
+            showToast('删除失败: ' + e.message, 'error');
+        }
+    };
+    document.getElementById('modal-confirm-delete-group').style.display = 'flex';
 }
 
 function switchGroupView(groupId) {

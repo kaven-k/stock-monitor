@@ -111,6 +111,7 @@
                 <div class="top-bar-right">
                     <button class="theme-toggle" onclick="toggleTheme()" title="切换深色/浅色模式" id="theme-toggle-btn">🌙</button>
                     <button class="btn btn-sm" onclick="showAddStockModal()">+ 添加股票</button>
+                    <button class="btn btn-sm" onclick="retagAll()">🏷️ 一键打标签</button>
                     <button class="btn btn-sm" onclick="showAlertRuleModal()">+ 预警规则</button>
                     <button class="btn btn-sm" id="btn-monitor-toggle" onclick="toggleMonitor()">⏸ 暂停监控</button>
                     <div class="refresh-control" style="position:relative">
@@ -384,6 +385,24 @@
             <div class="modal-footer">
                 <button class="btn" onclick="closeModal('modal-confirm-delete')">取消</button>
                 <button class="btn btn-danger" id="btn-confirm-delete">确认删除</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 一键打标签确认弹窗 -->
+    <div class="modal-overlay" id="modal-confirm-retag" style="display:none">
+        <div class="modal" style="max-width:400px">
+            <div class="modal-header"><h3>确认打标签</h3><button class="btn-icon" onclick="closeModal('modal-confirm-retag')">✕</button></div>
+            <div class="modal-body">
+                <div style="text-align:center;padding:10px 0">
+                    <div style="font-size:40px;margin-bottom:12px">🏷️</div>
+                    <div style="font-size:15px;color:var(--text-primary);margin-bottom:6px">将为所有股票重新自动打标签</div>
+                    <div style="font-size:12px;color:var(--text-muted)">此操作会覆盖现有标签</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn" onclick="closeModal('modal-confirm-retag')">取消</button>
+                <button class="btn btn-primary" onclick="doRetagAll()">确认</button>
             </div>
         </div>
     </div>
