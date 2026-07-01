@@ -107,6 +107,7 @@ class ApiClient {
     async addStock(code, name, market = 'A') { return (await this.post('/stocks', { code, name, market })).data; }
     async removeStock(code) { return (await this.delete(`/stocks/${code}`)).data; }
     async updateStockTags(code, tags) { return (await this.put(`/stocks/${code}/tags`, { tags })); }
+    async retagAllStocks() { return (await this.post('/stocks/retag')).data; }
 
     // ====== 分组接口 ======
     async getGroups() { return (await this.get('/groups')).data; }
