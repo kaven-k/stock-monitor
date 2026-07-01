@@ -1320,6 +1320,7 @@ document.addEventListener('click', e => {
 // ====== AI 智能选股 ======
 function showAIView() {
     document.getElementById('stock-panel').style.display = 'none';
+    document.getElementById('rules-panel').style.display = 'none';
     document.getElementById('market-panel').style.display = 'none';
     document.getElementById('ai-panel').style.display = '';
     document.getElementById('ai-picks-panel').style.display = 'none';
@@ -1332,6 +1333,7 @@ function showAIView() {
 // ====== AI 选股记录 ======
 function showAIPicksView() {
     document.getElementById('stock-panel').style.display = 'none';
+    document.getElementById('rules-panel').style.display = 'none';
     document.getElementById('market-panel').style.display = 'none';
     document.getElementById('ai-panel').style.display = 'none';
     document.getElementById('ai-picks-panel').style.display = '';
