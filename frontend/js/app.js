@@ -198,7 +198,10 @@ async function loadInitialData() {
         State.groups = groups;
         State.alertRules = rules;
         if (status.running !== undefined) State.monitorRunning = status.running;
-        if (status.interval) State.refreshInterval = status.interval;
+        if (status.interval) {
+            State.refreshInterval = status.interval;
+            State.countdown = status.interval;  // 同步倒计时初始值
+        }
 
         renderGroups();
         updateNavCounts();
