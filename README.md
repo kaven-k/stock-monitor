@@ -84,7 +84,10 @@ cd backend && python app.py          # → :5000
 
 # 前端（可选，单独开发调试）
 cd frontend && python -m http.server 8080  # → :8080
+部署后打开网址  localhost:8080
+如8080冲突可以修改端口
 ```
+
 
 ### 飞书通知（可选）
 

@@ -311,6 +311,8 @@ def exec_loop_with_socketio(sio):
 
 
 if __name__ == '__main__':
+    # 调试Flash问题
+
     print("=" * 60)
     print("  StockMonitor 股票监控系统 v2.0")
     print("  架构: 前后端分离 | REST API v1 | JWT 认证")
@@ -332,5 +334,7 @@ if __name__ == '__main__':
     self_module.socketio = socketio
     
     startup_monitor(socketio)
+    print(app.url_map)
+
     
     socketio.run(app, host=API_HOST, port=API_PORT, debug=False, allow_unsafe_werkzeug=True)

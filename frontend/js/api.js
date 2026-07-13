@@ -5,10 +5,14 @@
  * API_BASE 自动检测：优先使用当前页面域名，回退到 localhost:5000
  * 这样无论部署在哪个端口都能正常工作
  */
-
+// alert("我是新的 api.js");
 // 动态获取 API 地址：与页面同源（同协议+同域名+同端口）
 const _origin = window.location.origin;
-const API_BASE = (_origin && _origin !== 'null') ? _origin + '/api/v1' : 'http://localhost:5000/api/v1';
+// const API_BASE = (_origin && _origin !== 'null') ? _origin + '/api/v1' : 'http://localhost:5000/api/v1';
+//直接固定  请求后端5000/api/v1
+const API_BASE = 'http://localhost:5000/api/v1'; 
+// console.log("=== API BASE ===", API_BASE);
+
 
 class ApiClient {
     constructor(baseUrl = API_BASE) {
