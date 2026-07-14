@@ -1,0 +1,1634 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI选股回测分析报告</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;color:#1a1a2e;background:#f0f2f5;line-height:1.6}
+.container{max-width:1200px;margin:0 auto;padding:40px 20px}
+h1{font-size:28px;font-weight:700;margin-bottom:8px}
+.subtitle{font-size:14px;color:#606770;margin-bottom:32px}
+.card{background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.06);padding:24px;margin-bottom:20px}
+.card h2{font-size:18px;margin-bottom:16px;border-bottom:2px solid #3b82f6;padding-bottom:8px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:24px}
+.stat-card{background:#fff;border-radius:10px;padding:20px;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.stat-value{font-size:32px;font-weight:700}
+.stat-label{font-size:12px;color:#606770;margin-top:4px}
+.up{color:#e53e3e}.down{color:#38a169}.neutral{color:#718096}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:#f8f9fa;padding:10px 12px;text-align:left;font-weight:600;border-bottom:2px solid #e4e6eb;white-space:nowrap}
+td{padding:8px 12px;border-bottom:1px solid #f0f2f5}
+tr:hover td{background:#f8f9fa}
+.chart{width:100%;height:350px}
+.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+.badge-win{background:#fed7d7;color:#e53e3e}
+.badge-loss{background:#c6f6d5;color:#38a169}
+.badge-688{background:#fefcbf;color:#975a16}
+.insight{background:#eff6ff;border-left:3px solid #3b82f6;padding:14px 18px;border-radius:6px;margin:16px 0;font-size:13px}
+.insight strong{color:#1e40af}
+.warn{background:#fff3bf;border-left:3px solid #f59e0b}
+.section-divider{border-top:2px solid #e4e6eb;margin:24px 0}
+</style>
+</head>
+<body>
+<div class="container">
+<h1>📊 AI智能选股 · 回测分析报告</h1>
+<div class="subtitle">
+    样本数: 152 笔推荐 | 时间跨度: 2026-06-29 ~ 2026-07-04 00:17:50
+    | 基准: 沪深300 ETF (510300)
+</div>
+
+<!-- 核心指标 -->
+<div class="stats">
+    <div class="stat-card">
+        <div class="stat-value down">-15.4%</div>
+        <div class="stat-label">平均收益率</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value neutral">25.0%</div>
+        <div class="stat-label">胜率 (38/152)</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value down">21.7%</div>
+        <div class="stat-label">平均最大回撤</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value down">+0.0%</div>
+        <div class="stat-label">同期沪深300</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value down">-15.4%</div>
+        <div class="stat-label">超额收益 α</div>
+    </div>
+</div>
+
+<!-- 科创板分析 -->
+<div class="card">
+    <h2>🔬 科创板 vs 非科创板对比</h2>
+    <div class="stats">
+        <div class="stat-card">
+            <div class="stat-value">-14.3%</div>
+            <div class="stat-label">非科创板平均收益 (140笔)</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">25.7%</div>
+            <div class="stat-label">非科创板胜率</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value bad" style="color:#e53e3e">-27.7%</div>
+            <div class="stat-label">科创板平均收益 (12笔)</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" style="color:#718096">16.7%</div>
+            <div class="stat-label">科创板胜率</div>
+        </div>
+    </div>
+</div>
+
+<!-- 持仓天数分析 -->
+<div class="card">
+    <h2>📅 持仓天数 vs 收益率</h2>
+    <div id="chart-hold" class="chart"></div>
+</div>
+
+<!-- 评分 vs 收益率 -->
+<div class="card">
+    <h2>⭐ 评分区间 vs 平均收益率</h2>
+    <div id="chart-score" class="chart"></div>
+</div>
+
+<!-- 各批次表现 -->
+<div class="card">
+    <h2>📈 各批次选股表现</h2>
+    <div id="chart-session" class="chart"></div>
+</div>
+
+<!-- 收益分布 -->
+<div class="card">
+    <h2>📊 收益分布</h2>
+    <div id="chart-dist" class="chart"></div>
+</div>
+
+<!-- 表现最好/最差 -->
+<div class="card">
+    <h2>🏆 高频推荐股票排行（≥2次）</h2>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div>
+            <h4 style="color:#e53e3e;margin-bottom:8px">TOP 10 最佳</h4>
+            <table>
+                <tr><th>代码</th><th>名称</th><th>次数</th><th>平均收益</th></tr>
+                <tr><td>002423</td><td>--</td><td>4</td><td class="up">+31.1%</td></tr><tr><td>002653</td><td>--</td><td>2</td><td class="up">+24.3%</td></tr><tr><td>301520</td><td>--</td><td>2</td><td class="up">+12.3%</td></tr><tr><td>688336</td><td>--</td><td>2</td><td class="up">+12.2%</td></tr><tr><td>000566</td><td>--</td><td>3</td><td class="up">+8.8%</td></tr><tr><td>600988</td><td>--</td><td>4</td><td class="up">+6.5%</td></tr><tr><td>002273</td><td>--</td><td>5</td><td class="up">+4.9%</td></tr><tr><td>300269</td><td>--</td><td>5</td><td class="up">+1.9%</td></tr><tr><td>002458</td><td>--</td><td>2</td><td class="up">+1.1%</td></tr><tr><td>300346</td><td>--</td><td>2</td><td class="up">-0.7%</td></tr>
+            </table>
+        </div>
+        <div>
+            <h4 style="color:#38a169;margin-bottom:8px">TOP 10 最差</h4>
+            <table>
+                <tr><th>代码</th><th>名称</th><th>次数</th><th>平均收益</th></tr>
+                <tr><td>603738</td><td>--</td><td>3</td><td class="down">-76.6%</td></tr><tr><td>600172</td><td>--</td><td>3</td><td class="down">-67.2%</td></tr><tr><td>605111</td><td>--</td><td>4</td><td class="down">-63.1%</td></tr><tr><td>603538</td><td>--</td><td>4</td><td class="down">-61.3%</td></tr><tr><td>688286</td><td>--</td><td>4</td><td class="down">-49.2%</td></tr><tr><td>600909</td><td>--</td><td>5</td><td class="down">-42.1%</td></tr><tr><td>002747</td><td>--</td><td>10</td><td class="down">-40.7%</td></tr><tr><td>603986</td><td>--</td><td>2</td><td class="down">-38.7%</td></tr><tr><td>002559</td><td>--</td><td>3</td><td class="down">-32.9%</td></tr><tr><td>688728</td><td>--</td><td>4</td><td class="down">-26.2%</td></tr>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- 详细记录 -->
+<div class="card">
+    <h2>📋 全部推荐明细（最近100笔）</h2>
+    <div style="overflow-x:auto">
+    <table>
+        <tr>
+            <th>日期</th><th>代码</th><th>名称</th><th>评分</th>
+            <th>买入价</th><th>退出价</th><th>收益率</th><th>最大回撤</th>
+            <th>持仓</th><th>止损</th><th>止盈</th><th>688</th>
+        </tr>
+        
+        <tr>
+            <td>2026-07-04</td>
+            <td>002850</td>
+            <td>科达利</td>
+            <td>78</td>
+            <td>226.16</td>
+            <td>196.97</td>
+            <td class="down">-12.91%</td>
+            <td class="down">13.2%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-04</td>
+            <td>601177</td>
+            <td>杭齿前进</td>
+            <td>78</td>
+            <td>14.31</td>
+            <td>17.10</td>
+            <td class="up">+19.50%</td>
+            <td class="down">-18.5%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-04</td>
+            <td>600391</td>
+            <td>航发科技</td>
+            <td>80</td>
+            <td>35.52</td>
+            <td>38.68</td>
+            <td class="up">+8.90%</td>
+            <td class="down">2.6%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-04</td>
+            <td>002249</td>
+            <td>大洋电机</td>
+            <td>80</td>
+            <td>8.33</td>
+            <td>7.07</td>
+            <td class="down">-15.13%</td>
+            <td class="down">16.6%</td>
+            <td>4/2-4d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-04</td>
+            <td>603211</td>
+            <td>晋拓股份</td>
+            <td>82</td>
+            <td>35.94</td>
+            <td>22.21</td>
+            <td class="down">-38.20%</td>
+            <td class="down">39.2%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-04</td>
+            <td>600580</td>
+            <td>卧龙电驱</td>
+            <td>83</td>
+            <td>37.35</td>
+            <td>47.26</td>
+            <td class="up">+26.53%</td>
+            <td class="down">-24.9%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-04</td>
+            <td>600988</td>
+            <td>赤峰黄金</td>
+            <td>85</td>
+            <td>31.23</td>
+            <td>30.69</td>
+            <td class="down">-1.73%</td>
+            <td class="down">2.1%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-04</td>
+            <td>002747</td>
+            <td>埃斯顿</td>
+            <td>90</td>
+            <td>44.77</td>
+            <td>24.25</td>
+            <td class="down">-45.83%</td>
+            <td class="down">47.8%</td>
+            <td>5/3-5d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>002407</td>
+            <td>多氟多</td>
+            <td>82</td>
+            <td>54.82</td>
+            <td>49.34</td>
+            <td class="down">-10.00%</td>
+            <td class="down">10.0%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>603650</td>
+            <td>彤程新材</td>
+            <td>84</td>
+            <td>97.71</td>
+            <td>51.07</td>
+            <td class="down">-47.73%</td>
+            <td class="down">55.4%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>002326</td>
+            <td>永太科技</td>
+            <td>86</td>
+            <td>28.00</td>
+            <td>25.81</td>
+            <td class="down">-7.82%</td>
+            <td class="down">10.0%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>600172</td>
+            <td>黄河旋风</td>
+            <td>87</td>
+            <td>18.03</td>
+            <td>5.92</td>
+            <td class="down">-67.17%</td>
+            <td class="down">68.3%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>600392</td>
+            <td>盛和资源</td>
+            <td>88</td>
+            <td>29.89</td>
+            <td>23.07</td>
+            <td class="down">-22.82%</td>
+            <td class="down">28.0%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>002559</td>
+            <td>亚威股份</td>
+            <td>91</td>
+            <td>15.38</td>
+            <td>10.19</td>
+            <td class="down">-33.75%</td>
+            <td class="down">34.7%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>002842</td>
+            <td>翔鹭钨业</td>
+            <td>92</td>
+            <td>50.17</td>
+            <td>45.15</td>
+            <td class="down">-10.01%</td>
+            <td class="down">13.1%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>600988</td>
+            <td>赤峰黄金</td>
+            <td>96</td>
+            <td>28.39</td>
+            <td>31.69</td>
+            <td class="up">+11.62%</td>
+            <td class="down">-8.9%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>603466</td>
+            <td>风语筑</td>
+            <td>80</td>
+            <td>10.71</td>
+            <td>9.96</td>
+            <td class="down">-7.00%</td>
+            <td class="down">13.3%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>600392</td>
+            <td>盛和资源</td>
+            <td>82</td>
+            <td>30.00</td>
+            <td>23.40</td>
+            <td class="down">-22.00%</td>
+            <td class="down">28.2%</td>
+            <td>5/5d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>000572</td>
+            <td>海马汽车</td>
+            <td>84</td>
+            <td>4.15</td>
+            <td>3.89</td>
+            <td class="down">-6.27%</td>
+            <td class="down">9.2%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>600480</td>
+            <td>凌云股份</td>
+            <td>85</td>
+            <td>9.24</td>
+            <td>12.02</td>
+            <td class="up">+30.09%</td>
+            <td class="down">-27.7%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>600172</td>
+            <td>黄河旋风</td>
+            <td>86</td>
+            <td>18.03</td>
+            <td>5.92</td>
+            <td class="down">-67.17%</td>
+            <td class="down">68.3%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>002559</td>
+            <td>亚威股份</td>
+            <td>87</td>
+            <td>15.38</td>
+            <td>10.32</td>
+            <td class="down">-32.90%</td>
+            <td class="down">34.7%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>002842</td>
+            <td>翔鹭钨业</td>
+            <td>88</td>
+            <td>50.17</td>
+            <td>40.64</td>
+            <td class="down">-19.00%</td>
+            <td class="down">19.0%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>600988</td>
+            <td>赤峰黄金</td>
+            <td>90</td>
+            <td>28.39</td>
+            <td>30.69</td>
+            <td class="up">+8.10%</td>
+            <td class="down">-7.7%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>000700</td>
+            <td>模塑科技</td>
+            <td>83</td>
+            <td>16.87</td>
+            <td>16.75</td>
+            <td class="down">-0.71%</td>
+            <td class="down">7.6%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>002326</td>
+            <td>永太科技</td>
+            <td>84</td>
+            <td>28.62</td>
+            <td>23.81</td>
+            <td class="down">-16.81%</td>
+            <td class="down">16.8%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>002196</td>
+            <td>方正电机</td>
+            <td>86</td>
+            <td>13.49</td>
+            <td>13.18</td>
+            <td class="down">-2.30%</td>
+            <td class="down">10.1%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>002559</td>
+            <td>亚威股份</td>
+            <td>87</td>
+            <td>15.38</td>
+            <td>10.45</td>
+            <td class="down">-32.05%</td>
+            <td class="down">34.7%</td>
+            <td>4/2-4d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>600172</td>
+            <td>黄河旋风</td>
+            <td>89</td>
+            <td>18.03</td>
+            <td>5.92</td>
+            <td class="down">-67.17%</td>
+            <td class="down">68.3%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>600392</td>
+            <td>盛和资源</td>
+            <td>90</td>
+            <td>30.79</td>
+            <td>22.65</td>
+            <td class="down">-26.44%</td>
+            <td class="down">30.1%</td>
+            <td>4/3-4d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>600988</td>
+            <td>赤峰黄金</td>
+            <td>91</td>
+            <td>28.39</td>
+            <td>30.69</td>
+            <td class="up">+8.10%</td>
+            <td class="down">-7.7%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>002842</td>
+            <td>翔鹭钨业</td>
+            <td>93</td>
+            <td>50.17</td>
+            <td>40.64</td>
+            <td class="down">-19.00%</td>
+            <td class="down">19.0%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>000601</td>
+            <td>韶能股份</td>
+            <td>78</td>
+            <td>7.08</td>
+            <td>6.60</td>
+            <td class="down">-6.78%</td>
+            <td class="down">8.5%</td>
+            <td>2/1-2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>000566</td>
+            <td>海南海药</td>
+            <td>80</td>
+            <td>6.04</td>
+            <td>6.43</td>
+            <td class="up">+6.46%</td>
+            <td class="down">7.3%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>300139</td>
+            <td>晓程科技</td>
+            <td>80</td>
+            <td>38.68</td>
+            <td>37.43</td>
+            <td class="down">-3.23%</td>
+            <td class="down">7.9%</td>
+            <td>5/3-5d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>603538</td>
+            <td>美诺华</td>
+            <td>82</td>
+            <td>39.20</td>
+            <td>14.88</td>
+            <td class="down">-62.04%</td>
+            <td class="down">65.3%</td>
+            <td>4/2-4d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>300781</td>
+            <td>因赛集团</td>
+            <td>83</td>
+            <td>29.50</td>
+            <td>36.51</td>
+            <td class="up">+23.76%</td>
+            <td class="down">-16.9%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>301171</td>
+            <td>易点天下</td>
+            <td>85</td>
+            <td>37.17</td>
+            <td>31.87</td>
+            <td class="down">-14.26%</td>
+            <td class="down">18.9%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>002020</td>
+            <td>京新药业</td>
+            <td>88</td>
+            <td>14.66</td>
+            <td>14.93</td>
+            <td class="up">+1.84%</td>
+            <td class="down">3.3%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>002354</td>
+            <td>天娱数科</td>
+            <td>92</td>
+            <td>10.34</td>
+            <td>8.43</td>
+            <td class="down">-18.47%</td>
+            <td class="down">18.5%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>600909</td>
+            <td>华安证券</td>
+            <td>70</td>
+            <td>13.43</td>
+            <td>7.48</td>
+            <td class="down">-44.30%</td>
+            <td class="down">50.6%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>002458</td>
+            <td>益生股份</td>
+            <td>72</td>
+            <td>9.41</td>
+            <td>9.06</td>
+            <td class="down">-3.72%</td>
+            <td class="down">4.4%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>603538</td>
+            <td>美诺华</td>
+            <td>75</td>
+            <td>39.39</td>
+            <td>14.39</td>
+            <td class="down">-63.47%</td>
+            <td class="down">65.5%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>000566</td>
+            <td>海南海药</td>
+            <td>76</td>
+            <td>5.98</td>
+            <td>6.14</td>
+            <td class="up">+2.68%</td>
+            <td class="down">4.5%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>603738</td>
+            <td>泰晶科技</td>
+            <td>78</td>
+            <td>72.67</td>
+            <td>16.06</td>
+            <td class="down">-77.90%</td>
+            <td class="down">78.5%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>002747</td>
+            <td>埃斯顿</td>
+            <td>80</td>
+            <td>45.15</td>
+            <td>23.82</td>
+            <td class="down">-47.24%</td>
+            <td class="down">48.3%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>002407</td>
+            <td>多氟多</td>
+            <td>83</td>
+            <td>60.73</td>
+            <td>45.86</td>
+            <td class="down">-24.49%</td>
+            <td class="down">24.7%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-02</td>
+            <td>002326</td>
+            <td>永太科技</td>
+            <td>85</td>
+            <td>28.62</td>
+            <td>23.81</td>
+            <td class="down">-16.81%</td>
+            <td class="down">16.8%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002607</td>
+            <td>中公教育</td>
+            <td>84</td>
+            <td>1.98</td>
+            <td>2.09</td>
+            <td class="up">+5.56%</td>
+            <td class="down">10.6%</td>
+            <td>4/2-4d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>600999</td>
+            <td>招商证券</td>
+            <td>86</td>
+            <td>22.94</td>
+            <td>17.77</td>
+            <td class="down">-22.54%</td>
+            <td class="down">27.3%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002423</td>
+            <td>中粮资本</td>
+            <td>87</td>
+            <td>9.05</td>
+            <td>11.97</td>
+            <td class="up">+32.27%</td>
+            <td class="down">9.9%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>000566</td>
+            <td>海南海药</td>
+            <td>88</td>
+            <td>5.49</td>
+            <td>6.43</td>
+            <td class="up">+17.12%</td>
+            <td class="down">13.1%</td>
+            <td>4/2-4d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002458</td>
+            <td>益生股份</td>
+            <td>89</td>
+            <td>8.55</td>
+            <td>9.06</td>
+            <td class="up">+5.96%</td>
+            <td class="down">4.7%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>601628</td>
+            <td>中国人寿</td>
+            <td>91</td>
+            <td>38.78</td>
+            <td>49.55</td>
+            <td class="up">+27.77%</td>
+            <td class="down">9.2%</td>
+            <td>4/2-4d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>600909</td>
+            <td>华安证券</td>
+            <td>93</td>
+            <td>12.22</td>
+            <td>7.48</td>
+            <td class="down">-38.79%</td>
+            <td class="down">45.7%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002407</td>
+            <td>多氟多</td>
+            <td>95</td>
+            <td>55.25</td>
+            <td>49.34</td>
+            <td class="down">-10.70%</td>
+            <td class="down">10.7%</td>
+            <td>3/2-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>300269</td>
+            <td>联建光电</td>
+            <td>85</td>
+            <td>6.17</td>
+            <td>5.77</td>
+            <td class="down">-6.48%</td>
+            <td class="down">9.2%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>603538</td>
+            <td>美诺华</td>
+            <td>88</td>
+            <td>35.81</td>
+            <td>14.34</td>
+            <td class="down">-59.96%</td>
+            <td class="down">62.0%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002423</td>
+            <td>中粮资本</td>
+            <td>90</td>
+            <td>9.05</td>
+            <td>11.75</td>
+            <td class="up">+29.83%</td>
+            <td class="down">9.9%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>600233</td>
+            <td>圆通速递</td>
+            <td>90</td>
+            <td>17.33</td>
+            <td>16.25</td>
+            <td class="down">-6.23%</td>
+            <td class="down">7.7%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002326</td>
+            <td>永太科技</td>
+            <td>90</td>
+            <td>26.02</td>
+            <td>28.00</td>
+            <td class="up">+7.61%</td>
+            <td class="down">4.8%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002124</td>
+            <td>天邦食品</td>
+            <td>92</td>
+            <td>2.32</td>
+            <td>2.29</td>
+            <td class="down">-1.29%</td>
+            <td class="down">9.1%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>600909</td>
+            <td>华安证券</td>
+            <td>92</td>
+            <td>12.22</td>
+            <td>6.79</td>
+            <td class="down">-44.44%</td>
+            <td class="down">45.7%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002407</td>
+            <td>多氟多</td>
+            <td>95</td>
+            <td>55.25</td>
+            <td>54.82</td>
+            <td class="down">-0.78%</td>
+            <td class="down">5.0%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002409</td>
+            <td>雅克科技</td>
+            <td>85</td>
+            <td>236.09</td>
+            <td>186.45</td>
+            <td class="down">-21.03%</td>
+            <td class="down">23.3%</td>
+            <td>4/4d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>601991</td>
+            <td>大唐发电</td>
+            <td>87</td>
+            <td>7.79</td>
+            <td>3.63</td>
+            <td class="down">-53.40%</td>
+            <td class="down">55.1%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>600233</td>
+            <td>圆通速递</td>
+            <td>88</td>
+            <td>17.33</td>
+            <td>16.40</td>
+            <td class="down">-5.37%</td>
+            <td class="down">7.7%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002423</td>
+            <td>中粮资本</td>
+            <td>89</td>
+            <td>9.05</td>
+            <td>11.75</td>
+            <td class="up">+29.83%</td>
+            <td class="down">9.9%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>603538</td>
+            <td>美诺华</td>
+            <td>90</td>
+            <td>35.81</td>
+            <td>14.39</td>
+            <td class="down">-59.82%</td>
+            <td class="down">62.0%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002124</td>
+            <td>天邦食品</td>
+            <td>92</td>
+            <td>2.32</td>
+            <td>2.27</td>
+            <td class="down">-2.16%</td>
+            <td class="down">9.1%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>600909</td>
+            <td>华安证券</td>
+            <td>93</td>
+            <td>12.22</td>
+            <td>6.79</td>
+            <td class="down">-44.44%</td>
+            <td class="down">45.7%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002407</td>
+            <td>多氟多</td>
+            <td>95</td>
+            <td>55.25</td>
+            <td>49.34</td>
+            <td class="down">-10.70%</td>
+            <td class="down">10.7%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002326</td>
+            <td>永太科技</td>
+            <td>84</td>
+            <td>26.02</td>
+            <td>28.00</td>
+            <td class="up">+7.61%</td>
+            <td class="down">4.8%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>601336</td>
+            <td>新华保险</td>
+            <td>85</td>
+            <td>63.78</td>
+            <td>81.45</td>
+            <td class="up">+27.70%</td>
+            <td class="down">7.5%</td>
+            <td>5/5d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>000545</td>
+            <td>金浦钛业</td>
+            <td>86</td>
+            <td>2.62</td>
+            <td>2.55</td>
+            <td class="down">-2.67%</td>
+            <td class="down">11.1%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>600531</td>
+            <td>豫光金铅</td>
+            <td>87</td>
+            <td>16.24</td>
+            <td>12.73</td>
+            <td class="down">-21.61%</td>
+            <td class="down">26.2%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002423</td>
+            <td>中粮资本</td>
+            <td>88</td>
+            <td>9.05</td>
+            <td>11.97</td>
+            <td class="up">+32.27%</td>
+            <td class="down">9.9%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002747</td>
+            <td>埃斯顿</td>
+            <td>89</td>
+            <td>41.06</td>
+            <td>23.73</td>
+            <td class="down">-42.21%</td>
+            <td class="down">43.1%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>600909</td>
+            <td>华安证券</td>
+            <td>90</td>
+            <td>12.22</td>
+            <td>7.48</td>
+            <td class="down">-38.79%</td>
+            <td class="down">45.7%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002407</td>
+            <td>多氟多</td>
+            <td>92</td>
+            <td>55.25</td>
+            <td>54.82</td>
+            <td class="down">-0.78%</td>
+            <td class="down">5.0%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>603738</td>
+            <td>泰晶科技</td>
+            <td>82</td>
+            <td>66.06</td>
+            <td>15.88</td>
+            <td class="down">-75.96%</td>
+            <td class="down">76.3%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002548</td>
+            <td>金新农</td>
+            <td>84</td>
+            <td>4.06</td>
+            <td>5.96</td>
+            <td class="up">+46.80%</td>
+            <td class="down">8.9%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>000603</td>
+            <td>盛达资源</td>
+            <td>85</td>
+            <td>25.41</td>
+            <td>24.72</td>
+            <td class="down">-2.72%</td>
+            <td class="down">7.2%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002747</td>
+            <td>埃斯顿</td>
+            <td>87</td>
+            <td>41.06</td>
+            <td>23.68</td>
+            <td class="down">-42.33%</td>
+            <td class="down">43.1%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>600233</td>
+            <td>圆通速递</td>
+            <td>88</td>
+            <td>17.33</td>
+            <td>16.40</td>
+            <td class="down">-5.37%</td>
+            <td class="down">7.7%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002409</td>
+            <td>雅克科技</td>
+            <td>90</td>
+            <td>241.32</td>
+            <td>212.48</td>
+            <td class="down">-11.95%</td>
+            <td class="down">11.9%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>000545</td>
+            <td>金浦钛业</td>
+            <td>92</td>
+            <td>2.62</td>
+            <td>2.55</td>
+            <td class="down">-2.67%</td>
+            <td class="down">11.1%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002407</td>
+            <td>多氟多</td>
+            <td>95</td>
+            <td>55.25</td>
+            <td>54.82</td>
+            <td class="down">-0.78%</td>
+            <td class="down">5.0%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>000545</td>
+            <td>金浦钛业</td>
+            <td>83</td>
+            <td>2.62</td>
+            <td>2.55</td>
+            <td class="down">-2.67%</td>
+            <td class="down">11.1%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>600531</td>
+            <td>豫光金铅</td>
+            <td>84</td>
+            <td>16.07</td>
+            <td>12.38</td>
+            <td class="down">-22.96%</td>
+            <td class="down">25.4%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>300518</td>
+            <td>新迅达</td>
+            <td>85</td>
+            <td>39.66</td>
+            <td>39.66</td>
+            <td class="">+0.00%</td>
+            <td class="down">8.0%</td>
+            <td>1/1d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>600233</td>
+            <td>圆通速递</td>
+            <td>86</td>
+            <td>17.33</td>
+            <td>16.25</td>
+            <td class="down">-6.23%</td>
+            <td class="down">7.7%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>603738</td>
+            <td>泰晶科技</td>
+            <td>87</td>
+            <td>66.06</td>
+            <td>15.88</td>
+            <td class="down">-75.96%</td>
+            <td class="down">76.3%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002747</td>
+            <td>埃斯顿</td>
+            <td>88</td>
+            <td>41.06</td>
+            <td>23.73</td>
+            <td class="down">-42.21%</td>
+            <td class="down">43.1%</td>
+            <td>3/3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002409</td>
+            <td>雅克科技</td>
+            <td>90</td>
+            <td>243.02</td>
+            <td>212.48</td>
+            <td class="down">-12.57%</td>
+            <td class="down">12.6%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>002407</td>
+            <td>多氟多</td>
+            <td>92</td>
+            <td>55.25</td>
+            <td>54.82</td>
+            <td class="down">-0.78%</td>
+            <td class="down">5.0%</td>
+            <td>2/2d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>600233</td>
+            <td>圆通速递</td>
+            <td>80</td>
+            <td>17.33</td>
+            <td>16.40</td>
+            <td class="down">-5.37%</td>
+            <td class="down">7.7%</td>
+            <td>3/1-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>600584</td>
+            <td>长电科技</td>
+            <td>84</td>
+            <td>110.66</td>
+            <td>38.98</td>
+            <td class="down">-64.77%</td>
+            <td class="down">66.5%</td>
+            <td>4/2-4d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>603986</td>
+            <td>兆易创新</td>
+            <td>85</td>
+            <td>842.18</td>
+            <td>258.00</td>
+            <td class="down">-69.37%</td>
+            <td class="down">73.8%</td>
+            <td>5/3-5d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+        <tr>
+            <td>2026-07-01</td>
+            <td>000545</td>
+            <td>金浦钛业</td>
+            <td>86</td>
+            <td>2.62</td>
+            <td>2.46</td>
+            <td class="down">-6.11%</td>
+            <td class="down">11.1%</td>
+            <td>3/1-3d</td>
+            <td><span class="badge badge-loss">⚠️</span></td>
+            <td><span class="badge badge-win">🎯</span></td>
+            <td></td>
+        </tr>
+    </table>
+    </div>
+</div>
+
+<!-- 改进建议 -->
+<div class="card">
+    <h2>💡 改进建议</h2>
+    <div class="insight "><strong>✅ 过滤科创板正确</strong>：科创板推荐平均收益 -27.7%(胜率16.7%)，远低于非科创板的 -14.3%(胜率25.7%)。当前已全局过滤688xxx，此决策被回测数据支持。</div>
+<div class="insight "><strong>📅 优化持仓周期</strong>：最优持仓 1 天(均收益+0.0%)，最差 3-5 天(均收益-38.5%)。建议优先选择 1 天持仓周期的股票。</div>
+<div class="insight warn"><strong>⚠️ 高评分≠高收益</strong>：评分95+区间的平均收益-21.8%低于75分区间-11.7%。AI评分标准可能需要调整，考虑降低追高权重、增加估值因子。</div>
+<div class="insight "><strong>🛡 止损有效性</strong>：124/152 笔触及止损线，建议将止损比例从固定值改为ATR动态止损（如2×ATR），减少过早止损。</div>
+<div class="insight "><strong>🔻 回撤过大</strong>：平均最大回撤 21.7%，风险控制有待加强。建议增加仓位管理（单票不超过20%）、设置组合层面止损。</div>
+<div class="insight "><strong>🎲 胜率待提升</strong>：当前胜率 25.0% 不足50%，建议增加选股确认信号（如MACD金叉+量能放大双信号），减少误判。</div>
+<div class="insight "><strong>🏭 行业集中度</strong>：推荐集中在 半导体(21次)、机器人(16次)、材料(13次)。建议增加行业分散度，避免单一板块系统性风险。如半导体板块整体调整将导致多笔推荐同时亏损。</div>
+</div>
+
+</div>
+
+<script>
+const darkTheme = false;
+
+function makeChart(id, option) {
+    const dom = document.getElementById(id);
+    if (!dom) return;
+    const chart = echarts.init(dom, darkTheme ? 'dark' : undefined);
+    chart.setOption(option);
+    window.addEventListener('resize', () => chart.resize());
+}
+
+// 持仓天数 vs 收益
+makeChart('chart-hold', {
+    tooltip: {trigger:'axis'},
+    xAxis: {type:'category', data:["1\u5929", "2\u5929", "3\u5929", "4\u5929", "5\u5929", "2-3\u5929", "2-4\u5929", "1-2\u5929", "1-3\u5929", "3-5\u5929", "3-4\u5929"]},
+    yAxis: {type:'value', name:'平均收益率 %', axisLabel:{formatter:'{value}%'}},
+    series: [{name:'平均收益', type:'bar', data:[0.0, -12.37, -19.55, -21.03, 2.85, -10.74, -26.18, -10.12, -19.45, -38.49, -26.44],
+        itemStyle:{color:function(p){return p.value>=0?'#e53e3e':'#38a169'}}
+    }]
+});
+
+// 评分 vs 收益
+makeChart('chart-score', {
+    tooltip: {trigger:'axis'},
+    xAxis: {type:'category', data:["70", "75", "80", "85", "90", "95"], name:'评分区间'},
+    yAxis: {type:'value', name:'平均收益率 %', axisLabel:{formatter:'{value}%'}},
+    series: [{name:'平均收益', type:'bar', data:[-24.01, -11.73, -15.01, -16.62, -12.68, -21.83],
+        itemStyle:{color:'#3b82f6'}
+    }]
+});
+
+// 批次表现
+makeChart('chart-session', {
+    tooltip: {trigger:'axis'},
+    legend: {data:['平均收益','胜率']},
+    xAxis: {type:'category', data:["2026-06-29", "2026-06-30", "2026-07-01", "2026-07-02", "2026-07-04"], axisLabel:{rotate:45,fontSize:10}},
+    yAxis: [
+        {type:'value', name:'收益率 %', axisLabel:{formatter:'{value}%'}},
+        {type:'value', name:'胜率 %', max:100, axisLabel:{formatter:'{value}%'}}
+    ],
+    series: [
+        {name:'平均收益', type:'bar', data:[6.81, 5.66, -18.42, -20.2, -7.36], yAxisIndex:0,
+            itemStyle:{color:function(p){return p.value>=0?'#e53e3e':'#38a169'}}},
+        {name:'胜率', type:'line', data:[57.1, 54.5, 19.8, 20.0, 37.5], yAxisIndex:1,
+            lineStyle:{color:'#3b82f6'}, itemStyle:{color:'#3b82f6'}}
+    ]
+});
+
+// 收益分布
+const retData = [6.73, 15.0, 0.0, 8.21, -1.76, 19.49, 0.0, 9.7, 17.59, -8.68, 29.05, -1.4, -8.09, 13.8, -6.56, 9.98, -5.16, 11.98, -49.33, -25.48, 0.2, -62.66, -36.19, -9.35, -49.04, -26.9, 9.98, 4.72, -9.35, -36.43, -63.61, -11.14, -49.33, -25.48, 0.2, -0.36, -62.66, -10.19, -35.52, -55.66, -49.04, 4.23, -26.9, -0.36, -36.43, -63.61, -9.35, -5.35, -10.7, -51.95, -42.21, -14.22, -6.11, -69.37, -64.77, -5.37, -0.78, -12.57, -42.21, -75.96, -6.23, 0.0, -22.96, -2.67, -0.78, -2.67, -11.95, -5.37, -42.33, -2.72, 46.8, -75.96, -0.78, -38.79, -42.21, 32.27, -21.61, -2.67, 27.7, 7.61, -10.7, -44.44, -2.16, -59.82, 29.83, -5.37, -53.4, -21.03, -0.78, -44.44, -1.29, 7.61, -6.23, 29.83, -59.96, -6.48, -10.7, -38.79, 27.77, 5.96, 17.12, 32.27, -22.54, 5.56, -16.81, -24.49, -47.24, -77.9, 2.68, -63.47, -3.72, -44.3, -18.47, 1.84, -14.26, 23.76, -62.04, -3.23, 6.46, -6.78, -19.0, 8.1, -26.44, -67.17, -32.05, -2.3, -16.81, -0.71, 8.1, -19.0, -32.9, -67.17, 30.09, -6.27, -22.0, -7.0, 11.62, -10.01, -33.75, -22.82, -67.17, -7.82, -47.73, -10.0, -45.83, -1.73, 26.53, -38.2, -15.13, 8.9, 19.5, -12.91];
+const bins = [-15,-10,-8,-6,-4,-2,0,2,4,6,8,10,15,20,999];
+const counts = new Array(bins.length-1).fill(0);
+retData.forEach(v => {
+    for(let i=0;i<bins.length-1;i++) {
+        if(v >= bins[i] && v < bins[i+1]) { counts[i]++; break; }
+    }
+});
+const binLabels = bins.slice(0,-1).map((v,i) => (v>=0?'+':'')+v+'~'+(bins[i+1]>=999?'∞':bins[i+1])+'%');
+
+makeChart('chart-dist', {
+    tooltip: {trigger:'axis'},
+    xAxis: {type:'category', data:binLabels, axisLabel:{rotate:45,fontSize:9}},
+    yAxis: {type:'value', name:'笔数'},
+    series: [{name:'笔数', type:'bar', data:counts,
+        itemStyle:{color:function(p){const v=parseFloat(p.name); return v<0?'#38a169':'#e53e3e'}}
+    }]
+});
+</script>
+</body>
+</html>
