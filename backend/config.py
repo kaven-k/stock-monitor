@@ -66,3 +66,59 @@ DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.co
 
 # 接口限流 (每分钟最大请求数)
 RATE_LIMIT_PER_MINUTE = 100
+
+# ============ 选股范围配置 ============
+# 选股覆盖范围: 全A股市场
+#   候选池由「东方财富全市场板块领涨龙头 + 用户监控列表」构成，
+#   覆盖全市场主线板块，而非仅限用户监控列表。
+# 排除板块: 因当前可用资金有限，不具备部分板块的交易权限，需从候选池与推荐结果中剔除。
+SCREENING_CONFIG = {
+    # 市场覆盖范围: full_a_share = 全A股(板块龙头 + 监控列表)
+    "market_coverage": "full_a_share",
+    # 当前可用资金(元): 仅用于说明排除原因，不作硬性计算
+    "available_capital": 20000,
+    # 需排除的板块代码前缀 -> 排除原因（展示给用户 / AI 提示词）
+    # 科创板(688): 需账户资产≥50万且交易经验≥2年
+    # 北交所(83/87/88/92/43): 同样需账户资产≥50万门槛
+    # 二者当前可用资金约2万元均不具备交易权限。
+    # 如已开通某板块交易权限，直接删除对应行即可恢复该板块选股。
+    "exclude_boards": {
+        "688": "科创板(688xxx)，需账户资产≥50万且交易经验≥2年",
+        "300": "创业板(300xxx)，需账户资产≥10万且交易经验≥2年",
+        "301": "创业板(301xxx)，需账户资产≥10万且交易经验≥2年",
+        "83": "北交所(83xxxx)，需账户资产≥50万门槛",
+        "87": "北交所(87xxxx)，需账户资产≥50万门槛",
+        "88": "北交所(88xxxx)，需账户资产≥50万门槛",
+        "92": "北交所(92xxxx)，需账户资产≥50万门槛",
+        "43": "北交所/老三板(43xxxx)，需单独交易权限",
+    },
+}
+
+
+def is_excluded_stock(code):
+    """判断股票是否因权限/资金约束需从选股范围剔除。
+
+    返回 (bool_excluded, reason_or_None)
+    """
+    if not code:
+        return False, None
+    code = str(code).strip()
+    for prefix, reason in SCREENING_CONFIG.get("exclude_boards", {}).items():
+        if code.startswith(prefix):
+            return True, reason
+    return False, None
+
+
+def build_exclusion_prompt():
+    """生成嵌入 AI 提示词的排除说明（与 SCREENING_CONFIG 同步，单一数据源）"""
+    boards = SCREENING_CONFIG.get("exclude_boards", {})
+    if not boards:
+        return ""
+    lines = ["【选股范围限制·禁止推荐以下板块（用户无交易权限）】"]
+    for prefix, reason in boards.items():
+        lines.append(f"- {reason}（代码以 {prefix} 开头）")
+    cap = SCREENING_CONFIG.get("available_capital")
+    if cap:
+        lines.append(f"- 当前可用资金约 {cap} 元，不足以开通上述板块交易权限")
+    lines.append("⚠️ 严禁推荐上述被排除板块的股票代码！")
+    return "\n".join(lines)

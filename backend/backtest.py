@@ -551,7 +551,7 @@ def generate_suggestions(by_hold, by_score, by_688, non_avg, _688_avg, non_wr, _
     # 1. 科创板
     if len(by_688.get('688', [])) > 0:
         if _688_avg < non_avg and _688_wr < non_wr:
-            suggestions.append(f'<strong>✅ 过滤科创板正确</strong>：科创板推荐平均收益 {_688_avg:+.1f}%(胜率{_688_wr}%)，远低于非科创板的 {non_avg:+.1f}%(胜率{non_wr}%)。当前已全局过滤688xxx，此决策被回测数据支持。')
+            suggestions.append(f'<strong>✅ 过滤无权限板块正确</strong>：科创板推荐平均收益 {_688_avg:+.1f}%(胜率{_688_wr}%)，远低于非科创板的 {non_avg:+.1f}%(胜率{non_wr}%)。当前已按 SCREENING_CONFIG 全局过滤科创板(688xxx)/北交所等无交易权限板块，此决策被回测数据支持。')
         else:
             suggestions.append(f'<strong>⚠️ 重新审视科创板</strong>：科创板平均收益 {_688_avg:+.1f}%，相比非科创板 {non_avg:+.1f}% 并未明显劣势。如需覆盖科创板，需评估账户权限。')
     

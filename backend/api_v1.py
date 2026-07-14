@@ -22,7 +22,7 @@ import database as db
 from data_fetcher import fetch_tencent_quotes, fetch_kline, get_technical_indicators, search_stock, sync_kline_to_db
 from alert_engine import AlertEngine
 from auth import login_required
-from config import REFRESH_INTERVAL
+from config import REFRESH_INTERVAL, is_excluded_stock
 import monitor_state
 import feishu_notify
 import stock_tagger
@@ -502,13 +502,13 @@ def _gather_market_data():
     concept_ranking = get_sector_ranking("concept", 20)
     fund_flow = get_sector_fund_flow("all", 20)
 
-    # 收集板块龙头股票代码（全市场，不只监控的股票，排除科创板688xxx）
+    # 收集板块龙头股票代码（全市场，不只监控的股票，按 SCREENING_CONFIG 排除无权限板块）
     leader_codes = set()
     for ranking in [sector_ranking, concept_ranking]:
         if ranking and ranking.get("top"):
             for r in ranking["top"]:
                 lc = r.get("leader_code", "")
-                if lc and lc != "-" and not lc.startswith("688"):
+                if lc and lc != "-" and not is_excluded_stock(lc)[0]:
                     leader_codes.add(lc)
 
     # 批量获取龙头股行情（不在已有quotes中的）

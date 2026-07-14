@@ -11,18 +11,18 @@ import time
 import requests
 import os
 from datetime import datetime
-from config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_BASE_URL
+from config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_BASE_URL, is_excluded_stock, build_exclusion_prompt
 
 API_URL = f"{DEEPSEEK_BASE_URL}/v1/chat/completions"
 UA = "StockMonitor/2.0"
-SHORT_TERM_PROFILE = """
+SHORT_TERM_PROFILE = f"""
 【用户交易画像】
 - 风格: 超短线交易者
 - 最大持仓周期: 5个交易日（比如周一买入，最晚周五必卖出）
 - 偏好: 强势股突破、热门板块轮动、资金驱动型
 - 风控: 严格止损（-5%无条件离场），不恋战
 - 选股逻辑: 追涨不追高，关注资金异动和板块联动
-- ⚠️ 重要限制: 用户无科创板权限，不能推荐 688xxx 开头的科创板股票
+{build_exclusion_prompt()}
 """
 
 
@@ -114,14 +114,14 @@ def _build_market_context(quotes, sentiment, sector_ranking, fund_flow, indices)
         if leaders:
             ctx_parts.append(f"各板块领涨龙头: {' | '.join(leaders[:6])}")
 
-    # 7. 全市场候选股（板块龙头 + 监控股，取涨跌幅前20）
+    # 7. 全市场候选股（板块龙头 + 监控股，取涨跌幅前20，按 SCREENING_CONFIG 排除无权限板块）
     if quotes:
         sorted_stocks = sorted(quotes.items(), key=lambda x: x[1].get("change_pct", 0), reverse=True)
-        top_movers = [f"{q.get('name', c)}({c}) {q['change_pct']:+.1f}%" for c, q in sorted_stocks[:15] if q.get("change_pct", 0) > 0]
+        top_movers = [f"{q.get('name', c)}({c}) {q['change_pct']:+.1f}%" for c, q in sorted_stocks[:15] if q.get("change_pct", 0) > 0 and not is_excluded_stock(c)[0]]
         if top_movers:
             ctx_parts.append(f"全市场候选股(板块龙头+监控): {' | '.join(top_movers[:12])}")
         # 也列一下跌幅最大的（可能超跌反弹机会）
-        bottom_movers = [f"{q.get('name', c)}({c}) {q['change_pct']:+.1f}%" for c, q in sorted_stocks[-8:] if q.get("change_pct", 0) < -3]
+        bottom_movers = [f"{q.get('name', c)}({c}) {q['change_pct']:+.1f}%" for c, q in sorted_stocks[-8:] if q.get("change_pct", 0) < -3 and not is_excluded_stock(c)[0]]
         if bottom_movers:
             ctx_parts.append(f"跌幅较大(关注超跌反弹): {' | '.join(bottom_movers[:5])}")
 
@@ -157,7 +157,7 @@ def ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking,
 
 【你的任务】
 请从候选池中精选8只最适合短线（1-5天持有）操作的股票。
-⚠️ 严禁推荐688xxx开头的科创板股票！！！
+{build_exclusion_prompt()}
 
 候选池中标明了每只股票的涨跌停状态（⚠️已涨停/接近涨停/已跌停等），请你根据实际情况灵活判断：
 - 已涨停的股票：如果封单够强、板块持续发酵，次日的溢价空间可能很大（打板策略）。但如果板块后劲不足、封单薄弱，则风险极高。需要结合板块强度和资金面综合判断。
@@ -223,9 +223,9 @@ def ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking,
             return {"success": False, "error": "AI返回内容为空，无法解析", "raw": content[:500]}
         
         result = json.loads(json_str)
-        # 安全过滤：剔除科创板 688xxx 股票（用户无权限买入）
+        # 安全过滤：剔除无交易权限的板块股票（用户无权限买入，依据 SCREENING_CONFIG）
         if result.get("stocks"):
-            result["stocks"] = [s for s in result["stocks"] if not s.get("code", "").startswith("688")]
+            result["stocks"] = [s for s in result["stocks"] if not is_excluded_stock(s.get("code", ""))[0]]
         return {"success": True, **result}
     except json.JSONDecodeError as e:
         # JSON解析失败：保存原始内容以便调试
@@ -261,18 +261,18 @@ def _extract_hot_stocks(quotes, sector_ranking, fund_flow):
             if lc and lc != "-":
                 leader_codes.add(lc)
 
-    # 精选：领涨股 + 涨幅前20 + 成交额前15（扩大范围覆盖全市场，排除科创板）
+    # 精选：领涨股 + 涨幅前20 + 成交额前15（扩大范围覆盖全市场，按 SCREENING_CONFIG 排除无权限板块）
     hot_codes = set()
     for code in leader_codes:
-        if not code.startswith('688'):
+        if not is_excluded_stock(code)[0]:
             hot_codes.add(code)
     sorted_by_change = sorted(quotes.items(), key=lambda x: x[1].get("change_pct", 0), reverse=True)
     for code, _ in sorted_by_change[:20]:
-        if not code.startswith('688'):
+        if not is_excluded_stock(code)[0]:
             hot_codes.add(code)
     sorted_by_amount = sorted(quotes.items(), key=lambda x: x[1].get("amount_wan", 0), reverse=True)
     for code, _ in sorted_by_amount[:15]:
-        if not code.startswith('688'):
+        if not is_excluded_stock(code)[0]:
             hot_codes.add(code)
 
     # 格式化（最多35只，标注板块龙头和涨跌停状态）
@@ -335,7 +335,7 @@ def ai_screen(query, quotes, sentiment, sector_ranking, fund_flow, concept_ranki
 
 【重要】你的分析基于全市场实时数据，包括所有板块龙头和活跃标的，不局限于用户监控列表。
 选股时务必优先考虑当前市场主线板块的龙头股。
-⚠️ 严禁推荐688xxx开头的科创板股票！！！
+{build_exclusion_prompt()}
 ⚠️ 所有字符串值中严禁使用英文双引号("), 统一用单引号(')替代。若需引号，用中文引号「」替代。
 
 【输出要求】
@@ -371,8 +371,8 @@ def ai_screen(query, quotes, sentiment, sector_ranking, fund_flow, concept_ranki
         if json_str:
             try:
                 stocks = json.loads(json_str).get("stocks", [])
-                # 安全过滤：剔除科创板 688xxx 股票
-                stocks = [s for s in stocks if not s.get("code", "").startswith("688")]
+                # 安全过滤：剔除无交易权限的板块股票（依据 SCREENING_CONFIG）
+                stocks = [s for s in stocks if not is_excluded_stock(s.get("code", ""))[0]]
             except json.JSONDecodeError:
                 pass  # JSON 解析失败不影响文本内容返回
 
