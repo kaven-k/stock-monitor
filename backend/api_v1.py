@@ -19,7 +19,7 @@ from flask import Blueprint, request, jsonify, g
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import database as db
-from data_fetcher import fetch_tencent_quotes, fetch_kline, get_technical_indicators, search_stock, sync_kline_to_db
+from data_fetcher import fetch_tencent_quotes, fetch_kline, get_technical_indicators, search_stock, sync_kline_to_db, fetch_international
 from alert_engine import AlertEngine
 from auth import login_required
 from config import REFRESH_INTERVAL, is_excluded_stock
@@ -489,8 +489,56 @@ def sentiment_thermometer():
 
 # ============ AI 选股 ============
 
+def _enrich_tech_signals(quotes, leader_codes, max_codes=45):
+    """对候选股批量拉 K 线并计算 SignalEngine 技术共振评分，写入 quotes[code]['tech']。
+    纯增强：任一环节失败都不影响主选股流程（降级跳过）。"""
+    try:
+        from signal_engine import SignalEngine
+        eng = SignalEngine()
+    except Exception as e:
+        print(f"[AI] SignalEngine 不可用，跳过技术增强: {e}")
+        return
+
+    # 候选集：板块龙头 + 涨幅前25 + 成交额前15（排除无权限板块）
+    cand = set(leader_codes)
+    sorted_chg = sorted(quotes.items(), key=lambda x: x[1].get("change_pct", 0), reverse=True)[:25]
+    sorted_amt = sorted(quotes.items(), key=lambda x: x[1].get("amount_wan", 0), reverse=True)[:15]
+    for code, _ in sorted_chg + sorted_amt:
+        if not is_excluded_stock(code)[0]:
+            cand.add(code)
+    cand = [c for c in cand if c in quotes][:max_codes]
+    if not cand:
+        return
+
+    def _work(code):
+        try:
+            kl = fetch_kline(code, period="day", count=120)
+            if not kl or len(kl) < 60:
+                return code, None
+            res = eng.analyze(kl)
+            if not res:
+                return code, None
+            return code, {
+                "score": res.get("score", 0),
+                "level": res.get("level", ""),
+                "level_text": res.get("level_text", ""),
+                "signals": [s.get("text", "") for s in res.get("signals", []) if s.get("type") == "bullish"][:3],
+            }
+        except Exception:
+            return code, None
+
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for code, tech in ex.map(_work, cand):
+                if tech:
+                    quotes[code]["tech"] = tech
+    except Exception as e:
+        print(f"[AI] 技术增强并行计算失败(降级): {e}")
+
+
 def _gather_market_data():
-    """收集全市场数据供 AI 分析（监控股票 + 全市场板块龙头）"""
+    """收集全市场数据供 AI 分析（监控股票 + 全市场板块龙头 + 技术面增强 + 国际行情）"""
     stocks, quotes = _get_monitor_data()
 
     from market_sentiment import get_market_thermometer
@@ -524,7 +572,13 @@ def _gather_market_data():
     sentiment = get_market_thermometer(quotes) if quotes else None
     indices = sentiment.get("indices", {}) if sentiment else {}
 
-    return quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices
+    # 技术面增强：对候选股批量计算 SignalEngine 共振评分（写入 quotes[code]['tech']）
+    _enrich_tech_signals(quotes, leader_codes)
+
+    # 国际行情：美股三大指数 + 美元人民币（失败返回 None，由提示词降级）
+    international = fetch_international()
+
+    return quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices, international
 
 
 @api_v1.route('/ai/screen', methods=['POST'])
@@ -536,12 +590,12 @@ def ai_screen_query():
     if not query:
         return error(40001, "请输入选股问题", "INVALID_PARAM")
 
-    quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices = _gather_market_data()
+    quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices, international = _gather_market_data()
     if not quotes:
         return error(50003, "暂无实时行情数据", "NO_DATA")
 
     from ai_screener import ai_screen
-    result = ai_screen(query, quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices)
+    result = ai_screen(query, quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices, international)
     return success(result)
 
 
@@ -549,12 +603,12 @@ def ai_screen_query():
 @login_required
 def ai_quick_pick():
     """一键选股：AI 自动分析市场推荐8只短线标的（结果自动落库）"""
-    quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices = _gather_market_data()
+    quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices, international = _gather_market_data()
     if not quotes:
         return error(50003, "暂无实时行情数据", "NO_DATA")
 
     from ai_screener import ai_quick_pick
-    result = ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices)
+    result = ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices, international)
     
     # 自动落库：保存选股结果，供复盘
     if result.get('success') and result.get('stocks'):

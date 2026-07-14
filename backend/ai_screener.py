@@ -11,7 +11,11 @@ import time
 import requests
 import os
 from datetime import datetime
-from config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_BASE_URL, is_excluded_stock, build_exclusion_prompt
+from config import (
+    DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_BASE_URL,
+    is_excluded_stock, build_exclusion_prompt,
+    SELECTION_CONFIG, is_limit_up, is_buyable_candidate,
+)
 
 API_URL = f"{DEEPSEEK_BASE_URL}/v1/chat/completions"
 UA = "StockMonitor/2.0"
@@ -60,8 +64,8 @@ def _call_deepseek(messages, temperature=0.7, max_tokens=4096, stream=False):
     return None, err
 
 
-def _build_market_context(quotes, sentiment, sector_ranking, fund_flow, indices):
-    """构建全市场上下文（喂给LLM的背景信息）"""
+def _build_market_context(quotes, sentiment, sector_ranking, fund_flow, indices, international=None):
+    """构建全市场上下文（喂给LLM的背景信息），聚焦『可买性优先』的多因子环境。"""
     ctx_parts = []
 
     # 1. 三大指数
@@ -83,58 +87,70 @@ def _build_market_context(quotes, sentiment, sector_ranking, fund_flow, indices)
             f"涨跌比: 涨{b.get('up_count', 0)}/跌{b.get('down_count', 0)}"
         )
 
-    # 3. 行业涨幅 TOP10
+    # 3. 行业涨幅 TOP10（板块主线）
     if sector_ranking and sector_ranking.get("top"):
         top_sectors = sector_ranking["top"][:10]
         sector_str = " | ".join(
             f"{r['name']}({r['change_pct']:+.1f}% 资金{r.get('fund_flow_str','')})"
             for r in top_sectors
         )
-        ctx_parts.append(f"行业涨幅TOP10: {sector_str}")
+        ctx_parts.append(f"行业涨幅TOP10(板块主线): {sector_str}")
 
-    # 4. 概念涨幅 TOP10
-    if sector_ranking and sector_ranking.get("top"):
-        # 从 sector_ranking 的 top 中筛选概念板块（有 leader_name 的更好）
-        pass  # 概念数据在 get_sector_ranking("concept") 里
-
-    # 5. 资金流向 TOP5
+    # 4. 资金流入 TOP5（主力偏好）
     if fund_flow and fund_flow.get("top_inflow"):
         fund_str = " | ".join(
             f"{r['name']}({r.get('net_flow_str','')})"
             for r in fund_flow["top_inflow"][:5]
         )
-        ctx_parts.append(f"资金流入TOP5: {fund_str}")
+        ctx_parts.append(f"资金流入TOP5(主力偏好): {fund_str}")
 
-    # 6. 龙头股信息
+    # 5. 各板块领涨龙头（仅作强度观察，不推荐追板）
     if sector_ranking and sector_ranking.get("top"):
         leaders = []
         for r in sector_ranking["top"][:8]:
             if r.get("leader_name") and r["leader_name"] != "-":
                 leaders.append(f"{r['name']}→{r['leader_name']}({r['leader_code']})")
         if leaders:
-            ctx_parts.append(f"各板块领涨龙头: {' | '.join(leaders[:6])}")
+            ctx_parts.append(f"各板块领涨龙头(观察): {' | '.join(leaders[:6])}")
 
-    # 7. 全市场候选股（板块龙头 + 监控股，取涨跌幅前20，按 SCREENING_CONFIG 排除无权限板块）
+    # 6. 国际行情环境（美股 + 汇率，真实数据）
+    if international:
+        intl_parts = []
+        for idx in international.get("us_indices", []) or []:
+            intl_parts.append(f"{idx.get('name', '')} {idx.get('price', 0):.2f}({idx.get('change_pct', 0):+.2f}%)")
+        if intl_parts:
+            ctx_parts.append(f"隔夜美股: {' | '.join(intl_parts)}")
+        usdcny = international.get("usdcny")
+        if usdcny and usdcny.get("price"):
+            ctx_parts.append(f"美元/人民币: {usdcny['price']:.4f} ({usdcny.get('change_pct', 0):+.2f}%)")
+
+    # 7. 技术面共振概览（SignalEngine 评分，偏多标的）
     if quotes:
-        sorted_stocks = sorted(quotes.items(), key=lambda x: x[1].get("change_pct", 0), reverse=True)
-        top_movers = [f"{q.get('name', c)}({c}) {q['change_pct']:+.1f}%" for c, q in sorted_stocks[:15] if q.get("change_pct", 0) > 0 and not is_excluded_stock(c)[0]]
-        if top_movers:
-            ctx_parts.append(f"全市场候选股(板块龙头+监控): {' | '.join(top_movers[:12])}")
-        # 也列一下跌幅最大的（可能超跌反弹机会）
-        bottom_movers = [f"{q.get('name', c)}({c}) {q['change_pct']:+.1f}%" for c, q in sorted_stocks[-8:] if q.get("change_pct", 0) < -3 and not is_excluded_stock(c)[0]]
+        tech_bulls = []
+        for c, q in quotes.items():
+            tech = q.get("tech")
+            if tech and tech.get("score", 0) >= 30 and not is_excluded_stock(c)[0]:
+                tech_bulls.append(f"{q.get('name', c)}({tech.get('level_text', '')})")
+        if tech_bulls:
+            ctx_parts.append(f"技术面共振(偏多): {' | '.join(tech_bulls[:10])}")
+
+    # 8. 跌幅较大（超跌反弹观察）
+    if quotes:
+        sorted_stocks = sorted(quotes.items(), key=lambda x: x[1].get("change_pct", 0))
+        bottom_movers = [f"{q.get('name', c)}({c}) {q['change_pct']:+.1f}%" for c, q in sorted_stocks[:8] if q.get("change_pct", 0) < -3 and not is_excluded_stock(c)[0]]
         if bottom_movers:
             ctx_parts.append(f"跌幅较大(关注超跌反弹): {' | '.join(bottom_movers[:5])}")
 
     return "\n".join(ctx_parts)
 
 
-def ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices):
+def ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices, international=None):
     """
-    一键选股：自动分析市场，推荐8只短线标的
+    一键选股：自动分析市场，推荐8只可买入的短线标的（可买性优先）
 
-    返回格式: {success, stocks: [{code, name, reason, score, hold_days, stop_loss, target}], summary}
+    返回格式: {success, stocks: [{code, name, reason, score, hold_days, stop_loss, target}], summary, watch?}
     """
-    market_ctx = _build_market_context(quotes, sentiment, sector_ranking, fund_flow, indices)
+    market_ctx = _build_market_context(quotes, sentiment, sector_ranking, fund_flow, indices, international)
     if concept_ranking and concept_ranking.get("top"):
         concept_str = " | ".join(
             f"{r['name']}({r['change_pct']:+.1f}%)"
@@ -145,32 +161,32 @@ def ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking,
     # 精选热点股票数据
     hot_stocks = _extract_hot_stocks(quotes, sector_ranking, fund_flow)
 
-    system_prompt = f"""你是一位专业的A股短线交易分析师。
+    system_prompt = f"""你是一位专业的A股短线交易分析师，核心原则是『可操作性优先』：推荐的标的必须是当前时点普通账户可以实际买入、且具备上行潜力的股票。
 
 {SHORT_TERM_PROFILE}
 
-【当前市场概况】
+【当前市场概况（全市场数据）】
 {market_ctx}
 
-【候选股票池·全市场实时数据（板块龙头+涨幅领先+成交活跃，不限于用户监控股票）】
+【候选股票池·已按可买性分层】
 {hot_stocks}
 
 【你的任务】
-请从候选池中精选8只最适合短线（1-5天持有）操作的股票。
+请从『可买入候选池』中精选8只最适合短线（1-5天持有）操作的股票。
 {build_exclusion_prompt()}
 
-候选池中标明了每只股票的涨跌停状态（⚠️已涨停/接近涨停/已跌停等），请你根据实际情况灵活判断：
-- 已涨停的股票：如果封单够强、板块持续发酵，次日的溢价空间可能很大（打板策略）。但如果板块后劲不足、封单薄弱，则风险极高。需要结合板块强度和资金面综合判断。
-- 接近涨停的股票（7-9.5%）：如果能判断当天大概率封板，可考虑介入博取次日溢价。
-- 已跌停的股票：如果是恐慌性错杀（非基本面恶化），超跌反弹也可能是短线机会。
+【选股铁律·必须严格遵守】
+1. 默认只从『可买入候选池』选择：未涨停、未接近涨停（涨幅<7%），且量比/换手/成交额处于健康区间。
+2. 已涨停（≥9.8%）的股票一律不推荐买入——次日无法以合理成本介入，实战意义极低，仅作板块强度观察。
+3. 『打板观察区』的票（接近涨停）仅作风险提示，不得进入主推荐列表；如确需保留观察，最多2只且必须明确标注『高风险·不可买入』。
+4. 每只标的必须同时具备：所属板块今日强势（主线）+ 资金持续流入（量比/换手健康）+ 技术面偏多（金叉/多头/共振）。三者至少满足两项，且板块主线为必要项。
+5. 优先考虑强板块中的『次龙头/早启动』标的，而非已封板的绝对龙头——它们往往有更舒适的买点和更大上行空间。
 
-✅ 综合评价标准：
-1. 所属板块今日强势（涨幅>0%或有资金持续流入）
-2. 技术面多头排列或刚出现金叉信号
-3. 有量能支撑（换手率适中，考虑封板缩量也是正常的）
-4. 距离压力位有空间（上方无密集套牢盘）
-5. 龙头股优先于跟风股
-6. 优先选择市场主线板块中的标的
+【每只推荐必须包含的买入逻辑（reason，80-150字）】
+- 为什么现在可买：当前涨幅处于甜区（0.5%-6.5%），距压力位有空间，未封板可成交
+- 资金与板块驱动：所属主线板块 + 主力资金流入情况
+- 技术信号：MACD/均线/量价等共振证据（若有 SignalEngine 评分请引用）
+- 现实买入价：给出具体可执行的买入区间（需结合实时价，勿写模糊的『现价附近』）
 
 【输出格式】严格按以下JSON格式输出，不要包含任何其他文字：
 ⚠️ 极其重要：JSON中所有字符串的值（包括summary、reason、entry_price、stop_loss、target等）绝对不允许出现英文双引号(")字符！若有引用需求，请用单引号(')或中文引号「」替代。例如：写 'MACD金叉' 或 「资金流入」 而不是 "MACD金叉"。
@@ -181,8 +197,8 @@ def ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking,
       "code": "股票代码(6位)",
       "name": "股票名称",
       "score": 评分(1-100),
-      "reason": "详细买入逻辑，包含技术面、资金面、板块面三个维度的分析，80-150字",
-      "entry_price": "建议买入价区间，如 26.50-27.00 或 现价附近",
+      "reason": "详细买入逻辑，包含可买性+资金+板块+技术四维，80-150字",
+      "entry_price": "建议买入价区间，如 26.50-27.00",
       "hold_days": "建议持有天数(1-5)",
       "stop_loss": "止损价",
       "target": "目标价"
@@ -226,6 +242,8 @@ def ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking,
         # 安全过滤：剔除无交易权限的板块股票（用户无权限买入，依据 SCREENING_CONFIG）
         if result.get("stocks"):
             result["stocks"] = [s for s in result["stocks"] if not is_excluded_stock(s.get("code", ""))[0]]
+        # 后置可买性兜底：剔除无法买入的涨停/接近涨停票，必要时从行情兜底
+        result = _apply_buyable_filter(result, quotes)
         return {"success": True, **result}
     except json.JSONDecodeError as e:
         # JSON解析失败：保存原始内容以便调试
@@ -249,7 +267,12 @@ def ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking,
 
 
 def _extract_hot_stocks(quotes, sector_ranking, fund_flow):
-    """从全市场行情中提取热点候选股（板块龙头 + 涨幅前列 + 成交活跃）"""
+    """从全市场行情中提取热点候选股，按『可买性优先』分层。
+
+    返回两段文本：
+    1) 可买入候选池（未涨停/未接近涨停 + 资金健康 + 技术偏多）—— LLM 重点分析对象
+    2) 打板观察区（涨停/接近涨停，最多 board_watch_max 只）—— 仅风险观察，不推荐买入
+    """
     if not quotes:
         return "暂无实时行情数据"
 
@@ -261,58 +284,90 @@ def _extract_hot_stocks(quotes, sector_ranking, fund_flow):
             if lc and lc != "-":
                 leader_codes.add(lc)
 
-    # 精选：领涨股 + 涨幅前20 + 成交额前15（扩大范围覆盖全市场，按 SCREENING_CONFIG 排除无权限板块）
-    hot_codes = set()
-    for code in leader_codes:
+    # 候选集：领涨股 + 涨幅前25 + 成交额前15（覆盖全市场，排除无权限板块）
+    cand = set(leader_codes)
+    for code, _ in sorted(quotes.items(), key=lambda x: x[1].get("change_pct", 0), reverse=True)[:25]:
         if not is_excluded_stock(code)[0]:
-            hot_codes.add(code)
-    sorted_by_change = sorted(quotes.items(), key=lambda x: x[1].get("change_pct", 0), reverse=True)
-    for code, _ in sorted_by_change[:20]:
+            cand.add(code)
+    for code, _ in sorted(quotes.items(), key=lambda x: x[1].get("amount_wan", 0), reverse=True)[:15]:
         if not is_excluded_stock(code)[0]:
-            hot_codes.add(code)
-    sorted_by_amount = sorted(quotes.items(), key=lambda x: x[1].get("amount_wan", 0), reverse=True)
-    for code, _ in sorted_by_amount[:15]:
-        if not is_excluded_stock(code)[0]:
-            hot_codes.add(code)
+            cand.add(code)
+    cand = [c for c in cand if c in quotes]
 
-    # 格式化（最多35只，标注板块龙头和涨跌停状态）
-    lines = []
-    for code in list(hot_codes)[:35]:
+    buyable, watch = [], []
+    for code in cand:
         q = quotes.get(code, {})
-        if not q:
+        change = q.get("change_pct", 0)
+        vr = q.get("vol_ratio", 0)
+        to = q.get("turnover_pct", 0)
+        amt = q.get("amount_wan", 0)
+        tech = q.get("tech")
+        tech_score = tech.get("score") if tech else None
+
+        if is_limit_up(change):
+            # 涨停/接近涨停：归入打板观察区，不进入可买入候选池
+            watch.append((code, q, tech))
             continue
-        change = q.get('change_pct', 0)
-        # 标记涨跌停状态（A股主板±10%，创业板/科创板±20%）
-        tags = []
-        if change >= 9.8:
-            tags.append("⚠️已涨停")
-        elif change >= 7:
-            tags.append("接近涨停")
-        elif change <= -9.8:
-            tags.append("已跌停")
-        elif change <= -7:
-            tags.append("接近跌停")
-        if code in leader_codes:
-            tags.append("板块龙头")
-        tag_str = f" [{', '.join(tags)}]" if tags else ""
-        lines.append(
-            f"{q.get('name', code)}({code}) "
-            f"价格{q['price']:.2f} 涨幅{q['change_pct']:+.2f}% "
-            f"换手{q.get('turnover_pct', 0):.1f}% "
-            f"量比{q.get('vol_ratio', 0):.1f} "
-            f"成交额{q.get('amount_wan', 0)/10000:.1f}亿{tag_str}"
-        )
-    
+        if is_buyable_candidate(change, vr, to, amt, tech_score):
+            buyable.append((code, q, tech))
+
+    # 可买入候选池：技术评分优先，其次涨幅甜区(0.5%-6.5%)优先
+    def _buyable_sort_key(item):
+        _, q, tech = item
+        score = tech.get("score", 0) if tech else 0
+        return (score, q.get("change_pct", 0))
+    buyable.sort(key=_buyable_sort_key, reverse=True)
+    # 打板观察区：仅保留最强的 board_watch_max 只
+    watch = watch[:SELECTION_CONFIG["board_watch_max"]]
+
+    lines = []
+    # ---- 可买入候选池 ----
+    if buyable:
+        lines.append("【可买入候选池·重点分析对象（未涨停、资金健康、技术偏多）】")
+        for code, q, tech in buyable[:30]:
+            tags = []
+            if code in leader_codes:
+                tags.append("板块强势")
+            if tech and tech.get("score", 0) >= 30:
+                tags.append(f"技术{tech.get('level_text', '')}")
+            tag_str = f" [{', '.join(tags)}]" if tags else ""
+            lines.append(
+                f"{q.get('name', code)}({code}) "
+                f"价{q.get('price', 0):.2f} 涨幅{q.get('change_pct', 0):+.2f}% "
+                f"换手{q.get('turnover_pct', 0):.1f}% "
+                f"量比{q.get('vol_ratio', 0):.1f} "
+                f"额{q.get('amount_wan', 0)/10000:.1f}亿{tag_str}"
+            )
+    else:
+        lines.append("【可买入候选池】当前市场无满足条件的可买入标的（多处于涨停/高位），请参考下方打板观察区。")
+
+    # ---- 打板观察区 ----
+    if watch:
+        lines.append("")
+        lines.append("【打板观察区·仅风险观察，不推荐买入（已涨停/接近涨停）】")
+        for code, q, tech in watch:
+            tags = []
+            if code in leader_codes:
+                tags.append("板块龙头")
+            tag_str = f" [{', '.join(tags)}]" if tags else ""
+            lines.append(
+                f"{q.get('name', code)}({code}) "
+                f"价{q.get('price', 0):.2f} 涨幅{q.get('change_pct', 0):+.2f}% "
+                f"换手{q.get('turnover_pct', 0):.1f}% "
+                f"量比{q.get('vol_ratio', 0):.1f} "
+                f"额{q.get('amount_wan', 0)/10000:.1f}亿{tag_str}"
+            )
+
     return "\n".join(lines)
 
 
-def ai_screen(query, quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices):
+def ai_screen(query, quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices, international=None):
     """
-    对话式选股：用户自由提问
+    对话式选股：用户自由提问（可买性优先）
 
     返回格式: {success, answer, stocks: [...]}
     """
-    market_ctx = _build_market_context(quotes, sentiment, sector_ranking, fund_flow, indices)
+    market_ctx = _build_market_context(quotes, sentiment, sector_ranking, fund_flow, indices, international)
     if concept_ranking and concept_ranking.get("top"):
         concept_str = " | ".join(
             f"{r['name']}({r['change_pct']:+.1f}%)"
@@ -320,7 +375,7 @@ def ai_screen(query, quotes, sentiment, sector_ranking, fund_flow, concept_ranki
         )
         market_ctx += f"\n概念涨幅: {concept_str}"
 
-    system_prompt = f"""你是StockMonitor的AI选股助手，专为A股短线交易者服务。
+    system_prompt = f"""你是StockMonitor的AI选股助手，专为A股短线交易者服务，核心原则『可买性优先』。
 
 {SHORT_TERM_PROFILE}
 
@@ -330,19 +385,19 @@ def ai_screen(query, quotes, sentiment, sector_ranking, fund_flow, concept_ranki
 【你的能力】
 - 根据用户条件从全市场筛选股票（技术面、资金面、板块面、基本面）
 - 分析当前市场热点和主线板块
-- 评估个股短线操作价值和风险
+- 评估个股短线操作价值和风险（重点判断『现在是否可买入』）
 - 回答A股交易相关问题
 
 【重要】你的分析基于全市场实时数据，包括所有板块龙头和活跃标的，不局限于用户监控列表。
-选股时务必优先考虑当前市场主线板块的龙头股。
+选股时务必优先考虑当前市场主线板块中『可买入』的标的（未涨停/未接近涨停、资金健康、技术偏多），而非只推已封板的绝对龙头。涨停/接近涨停的票默认不推荐买入，仅作板块强度观察。
 {build_exclusion_prompt()}
 ⚠️ 所有字符串值中严禁使用英文双引号("), 统一用单引号(')替代。若需引号，用中文引号「」替代。
 
 【输出要求】
 1. 先给出你的分析和结论
-2. 如果涉及股票推荐，在末尾用如下JSON格式列出：
+2. 如果涉及股票推荐，在末尾用如下JSON格式列出（推荐需具备可买入性）：
 ```json
-{{"stocks": [{{"code": "000001", "name": "平安银行", "reason": "推荐理由30-50字"}}]}}
+{{"stocks": [{{"code": "000001", "name": "平安银行", "reason": "推荐理由30-50字，含当前可买性判断"}}]}}
 ```
 3. 如果用户问的问题和数据无关，正常回答即可"""
 
@@ -374,11 +429,81 @@ def ai_screen(query, quotes, sentiment, sector_ranking, fund_flow, concept_ranki
                 # 安全过滤：剔除无交易权限的板块股票（依据 SCREENING_CONFIG）
                 stocks = [s for s in stocks if not is_excluded_stock(s.get("code", ""))[0]]
             except json.JSONDecodeError:
-                pass  # JSON 解析失败不影响文本内容返回
+                stocks = []
+            # 后置可买性兜底：涨停/接近涨停票降级，仅保留可买入主推
+            stocks = _apply_buyable_filter({"stocks": stocks}, quotes).get("stocks", [])
 
         return {"success": True, "answer": content, "stocks": stocks}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+def _apply_buyable_filter(result, quotes):
+    """后置可买性兜底：涨停/接近涨停票不进主推荐，仅保留≤board_watch_max只到打板观察区。
+
+    若主推荐被全部清空（多半是涨停/高位），则从行情兜底筛选可买入标的。"""
+    c = SELECTION_CONFIG
+    stocks = result.get("stocks") or []
+    main, watch = [], []
+    for s in stocks:
+        code = s.get("code", "")
+        q = quotes.get(code, {})
+        chg = q.get("change_pct", None)
+        if chg is None:
+            # 行情中查不到（如用户自定义标的），保留但标注不确定
+            main.append(s)
+            continue
+        if chg >= c["limit_up_pct"]:
+            s["risk"] = "已涨停，无法买入，仅作打板观察"
+            watch.append(s)
+        elif chg >= c["near_limit_pct"]:
+            s["risk"] = "接近涨停，追高被套风险极高，仅作打板观察"
+            watch.append(s)
+        else:
+            main.append(s)
+
+    if not main and stocks:
+        # 主推荐被全部清空，兜底从行情筛选可买入标的
+        result["stocks"] = _get_fallback_picks(quotes, 8)
+        result["note"] = "AI主推标的因涨停/接近涨停无法买入，已自动切换为可买入标的兜底推荐"
+    else:
+        result["stocks"] = main[:8]
+
+    if watch:
+        result["watch"] = watch[:c["board_watch_max"]]
+    return result
+
+
+def _get_fallback_picks(quotes, n=8):
+    """兜底选股：当 AI 主推标的全部涨停/高位无法买入时，直接从行情中筛选可买入标的。"""
+    cands = []
+    for code, q in quotes.items():
+        if is_excluded_stock(code)[0]:
+            continue
+        change = q.get("change_pct", 0)
+        vr = q.get("vol_ratio", 0)
+        to = q.get("turnover_pct", 0)
+        amt = q.get("amount_wan", 0)
+        if not is_buyable_candidate(change, vr, to, amt):
+            continue
+        tech = q.get("tech")
+        score = tech.get("score", 0) if tech else 0
+        cands.append((score, code, q))
+    cands.sort(reverse=True)
+    picks = []
+    for score, code, q in cands[:n]:
+        price = q.get("price", 0) or 0
+        picks.append({
+            "code": code,
+            "name": q.get("name", code),
+            "score": max(50, min(90, 50 + score // 3)),
+            "reason": "系统兜底筛选：未涨停、资金活跃、技术偏多，当前价位具备可买入性（AI主推标的因涨停无法买入）",
+            "entry_price": f"{price:.2f}附近",
+            "hold_days": "3",
+            "stop_loss": f"{price * 0.95:.2f}",
+            "target": f"{price * 1.08:.2f}",
+        })
+    return picks
 
 
 if __name__ == "__main__":

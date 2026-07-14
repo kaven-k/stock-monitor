@@ -122,3 +122,48 @@ def build_exclusion_prompt():
         lines.append(f"- 当前可用资金约 {cap} 元，不足以开通上述板块交易权限")
     lines.append("⚠️ 严禁推荐上述被排除板块的股票代码！")
     return "\n".join(lines)
+
+
+# ============ 选股可买性配置 ============
+# 控制候选池构建与后置兜底，使选股结果聚焦「可买入 + 有潜力」的标的，
+# 而非只追已涨停的龙头（实战中往往买不到）。
+SELECTION_CONFIG = {
+    "prefer_buyable": True,          # 默认不推荐涨停/接近涨停票
+    "limit_up_pct": 9.8,             # 涨停阈值（主板/中小板±10%，取9.8判定封板）
+    "near_limit_pct": 7.0,           # 接近涨停阈值（>=7% 视为打板区，买入风险高）
+    "sweet_low": 0.5,                # 涨幅甜区下界（已启动未封板）
+    "sweet_high": 6.5,               # 涨幅甜区上界（仍有上行空间）
+    "vol_ratio_min": 1.2,            # 量比健康下界
+    "vol_ratio_max": 3.5,            # 量比健康上界（>3.5 警惕异常巨量）
+    "turnover_min": 3.0,             # 换手率健康下界(%)
+    "turnover_max": 15.0,            # 换手率健康上界(%)
+    "amount_min_wan": 10000,         # 最小日成交额(万)=1亿，排除僵尸股
+    "board_watch_max": 2,            # 打板观察区最多保留几只
+}
+
+
+def is_limit_up(change_pct):
+    """是否达到/接近涨停（归入打板观察区）"""
+    return change_pct >= SELECTION_CONFIG["near_limit_pct"]
+
+
+def passes_fund_filter(vol_ratio, turnover_pct, amount_wan):
+    """资金面健康度初筛（零成本，基于已有行情字段）"""
+    c = SELECTION_CONFIG
+    vr = vol_ratio or 0
+    to = turnover_pct or 0
+    amt = amount_wan or 0
+    return (c["vol_ratio_min"] <= vr <= c["vol_ratio_max"]
+            and c["turnover_min"] <= to <= c["turnover_max"]
+            and amt >= c["amount_min_wan"])
+
+
+def is_buyable_candidate(change_pct, vol_ratio, turnover_pct, amount_wan, tech_score=None):
+    """综合判定是否为『可买入候选』：未涨停/未接近涨停 + 资金健康 (+ 技术多头优先)"""
+    if is_limit_up(change_pct):
+        return False
+    if not passes_fund_filter(vol_ratio, turnover_pct, amount_wan):
+        return False
+    if tech_score is not None and tech_score <= 0:
+        return False
+    return True

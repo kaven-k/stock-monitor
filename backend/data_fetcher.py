@@ -106,6 +106,65 @@ def fetch_tencent_quotes(codes):
     return result
 
 
+# ============ 国际行情（美股/外汇） ============
+
+def fetch_international():
+    """
+    获取国际行情快照，用于 AI 选股「国际行情」因子（六维框架权重5%，此前无真实数据源）。
+    数据源: 腾讯财经全球行情(gtimg)，与 A股行情同源、稳定可达。
+    返回示例:
+    {
+      "us_indices": [{"name","code","price","change_pct"}, ...],  # 纳斯达克/道琼斯/标普500
+      "usdcny": {"name","code","price","change_pct"} | None,      # 美元兑人民币
+      "updated": "2026-07-15 01:43"
+    }
+    失败时返回 None（调用方降级为「国际数据暂缺，依国内因素研判」）。
+    扩展点: 如需原油/铜等大宗商品，可在 codes 中加入对应腾讯全球代码并解析。
+    """
+    codes = ["usIXIC", "usDJI", "usINX", "fxUSDCNY"]
+    url = "https://qt.gtimg.cn/q=" + ",".join(codes)
+    req = urllib.request.Request(url)
+    req.add_header("User-Agent", UA)
+    try:
+        resp = urllib.request.urlopen(req, timeout=10)
+        data = resp.read().decode("gbk")
+    except Exception as e:
+        print(f"[WARN] 国际行情请求失败: {e}")
+        return None
+
+    result = {"us_indices": [], "usdcny": None, "updated": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    try:
+        for line in data.strip().split(";"):
+            line = line.strip()
+            if not line or "=" not in line or '"' not in line:
+                continue
+            key = line.split("=")[0]                     # v_usIXIC / v_fxUSDCNY
+            code = key.split("_")[-1]                    # usIXIC / fxUSDCNY
+            vals = line.split('"')[1].split("~")
+            if len(vals) < 14:
+                continue
+            name = vals[1]
+            price = float(vals[3]) if vals[3] else 0
+            # 涨跌幅: 指数用 (现价-昨收)/昨收; 外汇 fxUSDCNY 用 (现价-前收参考)/前收
+            if code.startswith("fx"):
+                prev = float(vals[6]) if vals[6] else 0
+            else:
+                prev = float(vals[4]) if vals[4] else 0
+            change_pct = round((price - prev) / prev * 100, 2) if prev else 0.0
+            item = {"name": name, "code": code, "price": price, "change_pct": change_pct}
+            if code.startswith("fx"):
+                result["usdcny"] = item
+            else:
+                result["us_indices"].append(item)
+    except Exception as e:
+        print(f"[WARN] 国际行情解析失败: {e}")
+        return None
+
+    if not result["us_indices"] and not result["usdcny"]:
+        return None
+    return result
+
+
 # ============ K线数据 ============
 
 def fetch_kline_mootdx(code, category=4, count=250):
