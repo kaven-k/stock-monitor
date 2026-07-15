@@ -182,7 +182,9 @@ async function initApp() {
 
     await loadInitialData();
     initSocket();
-    startCountdown();
+    // 默认不自动刷新：后端默认不启动监控，登录后需用户手动点击“启动监控”
+    if (State.monitorRunning) startCountdown();
+    else clearCountdown();
 }
 
 async function loadInitialData() {
@@ -297,8 +299,10 @@ async function toggleMonitor() {
     try {
         if (State.monitorRunning) {
             await api.stopMonitor();
+            clearCountdown();   // 停止刷新：清空倒计时显示
         } else {
             await api.startMonitor();
+            startCountdown();   // 启动刷新：开始倒计时
         }
         State.monitorRunning = !State.monitorRunning;
         updateMonitorUI();
@@ -334,6 +338,12 @@ function startCountdown() {
         const el = document.getElementById('refresh-countdown');
         if (el) el.textContent = State.countdown;
     }, 1000);
+}
+
+function clearCountdown() {
+    if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+    const el = document.getElementById('refresh-countdown');
+    if (el) el.textContent = '—';
 }
 
 // ====== 股票表格 ======

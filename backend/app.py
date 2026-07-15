@@ -110,8 +110,14 @@ def startup_monitor(socketio_instance):
             print(f"  {s['name']}({s['code']}): 同步失败 - {e}")
     
     # 启动监控 (使用共享状态)
-    monitor_state.start_monitor(exec_loop_with_socketio, socketio_instance)
-    
+    # 默认不自动启动：登录后由用户在前端手动点击“启动监控”开启刷新
+    import config as _cfg
+    if _cfg.AUTO_START_MONITOR:
+        monitor_state.start_monitor(exec_loop_with_socketio, socketio_instance)
+        print("[Init] 监控已按配置自动启动")
+    else:
+        print("[Init] 监控未自动启动 (AUTO_START_MONITOR=false)，请登录后手动点击“启动监控”")
+
     # 同步到 api_v1 模块
     import api_v1
     api_v1.monitor_running = monitor_state.is_running()

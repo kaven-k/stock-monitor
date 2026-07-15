@@ -53,6 +53,8 @@ CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*")
 
 # 监控
 REFRESH_INTERVAL = int(os.environ.get("REFRESH_INTERVAL", 5))
+# 监控自动启动：默认关闭（登录后需用户在前端手动点击“启动监控”才开始刷新）
+AUTO_START_MONITOR = os.environ.get("AUTO_START_MONITOR", "false").lower() in ("1", "true", "yes", "on")
 
 # 飞书通知
 FEISHU_APP_ID = os.environ.get("FEISHU_APP_ID", "")

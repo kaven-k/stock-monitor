@@ -1,16 +1,17 @@
 """
-市场情绪指标模块 v3.1
-- 涨跌比 / 涨跌停统计（全市场东方财富数据）
+市场情绪指标模块 v3.2
+- 涨跌比 / 涨跌停统计（全市场数据）
 - 市场成交量（基于 Sina API 指数数据）
 - 恐慌贪婪指数
 - 市场温度计 (0-100)
 
-数据源: 东方财富 emdatah5 + Sina hq.sinajs.cn (全市场，不限于监控股票)
+数据源: 腾讯 qt.gtimg.cn → 东财延时 push2delay → 新浪 hq.sinajs.cn（1->2->3 降级链，全市场）
 
-升级点(v3.1):
-- 修复全市场API分页：每页100条，遍历全部5534只A股
+升级点(v3.2):
+- 多数据源降级链：1号腾讯 / 2号东财延时 / 3号新浪，任一失败自动切换下一源
+- 当前生效数据源编号与名称写入 source 标签，便于排查
 - 涨跌停从全量数据统计，不再采样
-- 增加5分钟缓存，避免重复请求
+- 5分钟缓存，避免重复请求
 """
 import requests
 import time
@@ -141,13 +142,13 @@ def _emdatah5_get(url, params=None, timeout=10):
     return {}
 
 
-def _fetch_one_page(url, base_params, page, page_size=100):
-    """抓取单页数据，返回 change_pct 列表（float）"""
+def _fetch_em_clist_page(host, base_params, page, page_size=500):
+    """抓取东方财富 clist 单页，返回 change_pct 列表（float）"""
     params = base_params.copy()
     params["pz"] = str(page_size)
     params["pn"] = str(page)
     try:
-        data = _emdatah5_get(url, params, timeout=8)
+        data = _emdatah5_get(f"https://{host}/api/qt/clist/get", params, timeout=8)
         if not data or "data" not in data:
             return []
         diffs = data["data"].get("diff", [])
@@ -165,11 +166,110 @@ def _fetch_one_page(url, base_params, page, page_size=100):
         return []
 
 
+def _fetch_all_market_changes_em():
+    """2号数据源: 东方财富延时行情 push2delay.eastmoney.com 全市场 clist
+    注意: 该接口每页固定返回 100 条（pz 参数被忽略），必须按 pn 翻页至全量。"""
+    host = "push2delay.eastmoney.com"
+    base_params = {
+        "fid": "f3", "po": "1", "np": "1", "fltt": "2", "invt": "2",
+        "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23", "fields": "f3",
+    }
+    count_params = base_params.copy()
+    count_params["pz"] = "1"
+    count_params["pn"] = "1"
+    try:
+        count_data = _emdatah5_get(f"https://{host}/api/qt/clist/get", count_params, timeout=8)
+        total = count_data.get("data", {}).get("total", 0) if count_data else 0
+        if total <= 0:
+            return None
+        page_size = 100  # 该接口每页固定 100 条，pz 参数无效
+        total_pages = (total + page_size - 1) // page_size
+        all_changes = []
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {executor.submit(_fetch_em_clist_page, host, base_params, p, page_size): p
+                       for p in range(1, total_pages + 1)}
+            for future in as_completed(futures):
+                try:
+                    all_changes.extend(future.result())
+                except Exception:
+                    pass
+        # 要求拿到足够完整的样本，避免网络抖动导致的残缺数据
+        if len(all_changes) >= max(500, int(total * 0.6)):
+            return all_changes
+    except Exception:
+        return None
+    return None
+
+
+def _fetch_sina_batch(codes, batch_size=80):
+    """分批从新浪获取行情，返回 {code: change_pct}（8线程并行）"""
+    import urllib.request
+    result = {}
+    batches = [codes[i:i + batch_size] for i in range(0, len(codes), batch_size)]
+
+    def fetch_one(batch):
+        local = {}
+        url = "https://hq.sinajs.cn/list=" + ",".join(batch)
+        req = urllib.request.Request(url, headers={
+            "User-Agent": UA, "Referer": "https://finance.sina.com.cn/"
+        })
+        try:
+            data = urllib.request.urlopen(req, timeout=10).read().decode("gbk")
+        except Exception:
+            return local
+        for line in data.strip().split("\n"):
+            if "hq_str" not in line or "=" not in line or '"' not in line:
+                continue
+            try:
+                key = line.split("=")[0].replace("var hq_str_", "")
+                vals = line.split('"')[1].split(",")
+                if len(vals) < 4 or not vals[2] or not vals[3]:
+                    continue
+                prev = float(vals[2])
+                price = float(vals[3])
+                if prev == 0:
+                    continue
+                local[key] = round((price - prev) / prev * 100, 2)
+            except (ValueError, IndexError, ZeroDivisionError):
+                continue
+        return local
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        for future in as_completed([executor.submit(fetch_one, b) for b in batches]):
+            result.update(future.result())
+    return result
+
+
+def _fetch_all_market_changes_sina():
+    """3号数据源: 新浪 hq.sinajs.cn 批量接口（独立供应商）"""
+    codes = _generate_a_share_codes()
+    changes = _fetch_sina_batch(codes, batch_size=80)
+    return list(changes.values()) if changes else None
+
+
+# ===== 全市场涨跌数据源链（1 -> 2 -> 3 降级）=====
+# 1号: 腾讯 qt.gtimg.cn      （批量, 4线程并行, 稳定不封IP）
+# 2号: 东财延时 push2delay    （clist 全量, 备用主机）
+# 3号: 新浪 hq.sinajs.cn      （批量, 独立供应商）
+def _build_source_chain():
+    return [
+        {"id": 1, "name": "腾讯", "fn": _fetch_all_market_changes_tencent},
+        {"id": 2, "name": "东财延时", "fn": _fetch_all_market_changes_em},
+        {"id": 3, "name": "新浪", "fn": _fetch_all_market_changes_sina},
+    ]
+
+
+def _current_source():
+    """返回当前缓存使用的数据源 (source_id, source_name)，无有效数据时均为 None"""
+    with _full_market_cache["lock"]:
+        return _full_market_cache.get("source_id"), _full_market_cache.get("source_name")
+
+
 def _fetch_all_market_changes(force_refresh=False):
     """
-    获取全市场所有A股的涨跌幅列表（优先腾讯，降级东财push2）
+    获取全市场所有A股的涨跌幅列表（按 1->2->3 数据源链降级）
     返回 [float, ...] 涨跌幅列表，或 None（全部失败时）
-    使用 5 分钟缓存。
+    使用 5 分钟缓存，并缓存当前生效的数据源编号/名称。
     """
     with _full_market_cache["lock"]:
         now = time.time()
@@ -177,58 +277,28 @@ def _fetch_all_market_changes(force_refresh=False):
             return _full_market_cache["data"]
 
     result = None
+    used_source = {"id": None, "name": None}
 
-    # === 主方案：腾讯 qt.gtimg.cn 批量接口（稳定、不封 IP）===
-    try:
-        print("[Sentiment] 尝试腾讯全市场数据源...")
-        tencent_result = _fetch_all_market_changes_tencent()
-        if tencent_result and len(tencent_result) > 100:
-            result = tencent_result
-            print(f"[Sentiment] 腾讯成功: {len(result)} 只股票")
-    except Exception as e:
-        print(f"[Sentiment] 腾讯全市场数据失败: {e}")
-
-    # === 降级方案：东方财富 push2.eastmoney.com（可能被拒）===
-    if result is None:
+    for src in _build_source_chain():
         try:
-            print("[Sentiment] 尝试东财 push2 降级方案...")
-            url = "https://push2.eastmoney.com/api/qt/clist/get"
-            base_params = {
-                "fid": "f3", "po": "1", "np": "1",
-                "fltt": "2", "invt": "2",
-                "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
-                "fields": "f3",
-            }
-            params_count = base_params.copy()
-            params_count["pz"] = "1"
-            params_count["pn"] = "1"
-            count_data = _emdatah5_get(url, params_count, timeout=8)
-            total = count_data.get("data", {}).get("total", 0) if count_data else 0
-            if total > 0:
-                page_size = 100
-                total_pages = (total + page_size - 1) // page_size
-                all_changes = []
-                with ThreadPoolExecutor(max_workers=5) as executor:
-                    futures = {}
-                    for page in range(1, total_pages + 1):
-                        future = executor.submit(_fetch_one_page, url, base_params, page, page_size)
-                        futures[future] = page
-                    for future in as_completed(futures):
-                        page = futures[future]
-                        try:
-                            changes = future.result()
-                            all_changes.extend(changes)
-                        except Exception as e:
-                            print(f"[Sentiment] 东财第{page}页抓取失败: {e}")
-                if all_changes:
-                    result = all_changes
-                    print(f"[Sentiment] 东财成功: {len(result)} 只股票")
+            print(f"[Sentiment] 尝试 {src['id']}号数据源({src['name']})...")
+            r = src["fn"]()
+            if r and len(r) > 100:
+                result = r
+                used_source = {"id": src["id"], "name": src["name"]}
+                print(f"[Sentiment] {src['id']}号({src['name']})成功: {len(result)} 只股票")
+                break
+            print(f"[Sentiment] {src['id']}号({src['name']})无有效数据, 尝试下一源")
         except Exception as e:
-            print(f"[Sentiment] 东财 push2 也失败: {e}")
+            print(f"[Sentiment] {src['id']}号({src['name']})失败: {e}")
 
-    # 缓存结果（包括 None，避免短时间内反复重试失败的源）
+    if result is None:
+        print("[Sentiment] 全部数据源均失败, 全市场宽度降级为监控股票")
+
     with _full_market_cache["lock"]:
         _full_market_cache["data"] = result
+        _full_market_cache["source_id"] = used_source["id"]
+        _full_market_cache["source_name"] = used_source["name"]
         _full_market_cache["timestamp"] = time.time()
 
     return result
@@ -250,11 +320,13 @@ def get_full_market_breadth():
         down = sum(1 for c in all_changes if c < 0)
         flat = total - up - down
 
+        sid, sname = _current_source()
+        source_label = f"全市场({sid}号·{sname}) {total}只A股" if sid else f"全市场 {total}只A股"
         return {
             "up_count": up, "down_count": down, "flat_count": flat,
             "total": total, "up_ratio": round(up / total * 100, 1) if total else 0,
             "time": datetime.now().strftime("%H:%M:%S"),
-            "source": f"全市场(腾讯) {total}只A股",
+            "source": source_label,
         }
     except Exception as e:
         print(f"[Sentiment] 全市场涨跌数据获取失败: {e}")
@@ -274,11 +346,13 @@ def get_full_market_limit_stats():
         limit_up = sum(1 for c in all_changes if c >= 9.8)
         limit_down = sum(1 for c in all_changes if c <= -9.8)
 
+        sid, sname = _current_source()
+        source_label = f"全市场({sid}号·{sname}) {len(all_changes)}只A股" if sid else f"全市场 {len(all_changes)}只A股"
         return {
             "limit_up": limit_up, "limit_down": limit_down,
             "net": limit_up - limit_down,
             "time": datetime.now().strftime("%H:%M:%S"),
-            "source": f"全市场(腾讯) {len(all_changes)}只A股",
+            "source": source_label,
         }
     except Exception as e:
         print(f"[Sentiment] 全市场涨跌停数据获取失败: {e}")
@@ -447,7 +521,9 @@ def get_sentiment_index(quotes=None):
     if full_changes and len(full_changes) > 100:
         # 全市场数据可用：基于全部 A 股计算
         all_changes = full_changes
-        sample_label = f"全市场({len(all_changes)}只)"
+        sid, sname = _current_source()
+        src_tag = f"{sid}号·{sname}" if sid else "全市场"
+        sample_label = f"{src_tag}({len(all_changes)}只)"
     else:
         # 降级为监控股票
         all_changes = [q.get("change_pct", 0) for q in quotes.values()]
