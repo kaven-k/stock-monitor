@@ -1539,7 +1539,7 @@ async function aiQuickPick() {
     try {
         const res = await api.post('/ai/quick-pick');
         loading.style.display = 'none';
-        btn.textContent = '⚡ 一键选股 — AI 自动分析市场，推荐8只短线标的';
+        btn.textContent = '⚡ 一键选股 — AI 自动分析市场，推荐10只短线标的';
         btn.disabled = false;
         
         if (res.code === 0 && res.data.success) {
@@ -1557,7 +1557,7 @@ async function aiQuickPick() {
         }
     } catch (e) {
         loading.style.display = 'none';
-        btn.textContent = '⚡ 一键选股 — AI 自动分析市场，推荐8只短线标的';
+        btn.textContent = '⚡ 一键选股 — AI 自动分析市场，推荐10只短线标的';
         btn.disabled = false;
         result.innerHTML = '<div style="color:var(--danger);padding:16px;text-align:center">网络请求失败: ' + e.message + '</div>';
     }
@@ -1566,21 +1566,28 @@ async function aiQuickPick() {
 function renderAIQuickPickResult(data) {
     const summary = data.summary || '';
     const stocks = data.stocks || [];
+    const watch = data.watch || [];
     const saved = data.saved || 0;
     const groupName = data.group_name || '';
     const groupStocks = data.group_stocks || 0;
-    
+    const note = data.note || '';
+
     let html = '<div style="margin-bottom:16px;padding:12px 16px;background:var(--bg-tertiary);border-radius:var(--radius);font-size:13px;color:var(--text-secondary)">' +
         '<span style="font-weight:600;color:var(--text-primary)">市场策略: </span>' + summary;
     if (saved > 0) {
         html += ' <span style="font-size:11px;color:var(--success)">(已记录📋)</span>';
+    }
+    if (note) {
+        html += '<br><span style="font-size:11px;color:var(--warning)">⚠️ ' + note + '</span>';
     }
     if (groupName) {
         html += '<br><span style="font-size:11px;color:var(--primary)">📁 已自动创建分组「' + groupName + '」(' + groupStocks + '只)</span>';
         html += ' <span style="font-size:10px;color:var(--text-muted)">—— 在左侧分组中查看实时涨跌，便于复盘</span>';
     }
     html += '</div>';
-    
+
+    // 主推：可买入标的
+    html += '<div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--text-primary)">✅ 可买入主推（' + stocks.length + '只）</div>';
     html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
     stocks.forEach((s, i) => {
         const scoreColor = s.score >= 80 ? 'var(--color-up)' : s.score >= 60 ? 'var(--warning)' : 'var(--text-muted)';
@@ -1598,7 +1605,23 @@ function renderAIQuickPickResult(data) {
             '</div></div>';
     });
     html += '</div>';
-    
+
+    // 打板观察区：仅风险观察，不可买入
+    if (watch.length > 0) {
+        html += '<div style="font-size:12px;font-weight:600;margin:16px 0 8px;color:var(--warning)">🔭 打板观察区（仅风险观察 · 不可买入，' + watch.length + '只）</div>';
+        html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">';
+        watch.forEach((s) => {
+            const risk = s.risk || '高风险·不可买入';
+            html += '<div style="background:var(--bg-tertiary);border-radius:var(--radius);padding:14px;border-left:3px solid var(--warning);opacity:0.9">' +
+                '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:8px">' +
+                '<div><span style="font-weight:700;font-size:15px">' + s.name + '</span><span style="color:var(--text-muted);font-size:11px;margin-left:6px">' + s.code + '</span></div>' +
+                (s.score ? '<span style="font-size:12px;font-weight:700;color:var(--warning)">' + s.score + '分</span>' : '') + '</div>' +
+                '<div style="font-size:12px;color:var(--warning);margin-bottom:8px;line-height:1.5">🚫 ' + risk + '</div>' +
+                '<div style="font-size:12px;color:var(--text-secondary);line-height:1.5">' + (s.reason || '') + '</div></div>';
+        });
+        html += '</div>';
+    }
+
     document.getElementById('ai-result').innerHTML = html;
 }
 

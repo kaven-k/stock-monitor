@@ -14,7 +14,7 @@ from datetime import datetime
 from config import (
     DEEPSEEK_API_KEY, DEEPSEEK_MODEL, DEEPSEEK_BASE_URL,
     is_excluded_stock, build_exclusion_prompt,
-    SELECTION_CONFIG, is_limit_up, is_buyable_candidate,
+    SELECTION_CONFIG, is_limit_up, is_buyable_candidate, passes_fund_filter,
 )
 
 API_URL = f"{DEEPSEEK_BASE_URL}/v1/chat/completions"
@@ -113,7 +113,7 @@ def _build_market_context(quotes, sentiment, sector_ranking, fund_flow, indices,
         if leaders:
             ctx_parts.append(f"各板块领涨龙头(观察): {' | '.join(leaders[:6])}")
 
-    # 6. 国际行情环境（美股 + 汇率，真实数据）
+    # 6. 国际行情环境（美股 + 汇率 + 大宗商品，真实数据）
     if international:
         intl_parts = []
         for idx in international.get("us_indices", []) or []:
@@ -123,6 +123,10 @@ def _build_market_context(quotes, sentiment, sector_ranking, fund_flow, indices,
         usdcny = international.get("usdcny")
         if usdcny and usdcny.get("price"):
             ctx_parts.append(f"美元/人民币: {usdcny['price']:.4f} ({usdcny.get('change_pct', 0):+.2f}%)")
+        commods = international.get("commodities", []) or []
+        if commods:
+            cparts = [f"{c.get('name', '')} {c.get('price', 0):.2f}({c.get('change_pct', 0):+.2f}%)" for c in commods]
+            ctx_parts.append(f"大宗商品: {' | '.join(cparts)}")
 
     # 7. 技术面共振概览（SignalEngine 评分，偏多标的）
     if quotes:
@@ -146,7 +150,7 @@ def _build_market_context(quotes, sentiment, sector_ranking, fund_flow, indices,
 
 def ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices, international=None):
     """
-    一键选股：自动分析市场，推荐8只可买入的短线标的（可买性优先）
+    一键选股：自动分析市场，推荐可买入的短线标的（可买性优先，数量见 SELECTION_CONFIG.pick_count）
 
     返回格式: {success, stocks: [{code, name, reason, score, hold_days, stop_loss, target}], summary, watch?}
     """
@@ -172,7 +176,7 @@ def ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking,
 {hot_stocks}
 
 【你的任务】
-请从『可买入候选池』中精选8只最适合短线（1-5天持有）操作的股票。
+请从『可买入候选池』中精选{SELECTION_CONFIG['pick_count']}只最适合短线（1-5天持有）操作的股票。
 {build_exclusion_prompt()}
 
 【选股铁律·必须严格遵守】
@@ -208,7 +212,7 @@ def ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking,
 
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": "请严格按照JSON格式输出8只最佳短线标的，不要输出任何其他内容。"},
+        {"role": "user", "content": f"请严格按照JSON格式输出{SELECTION_CONFIG['pick_count']}只最佳短线标的，不要输出任何其他内容。"},
     ]
 
     data, err = _call_deepseek(messages, temperature=0.6, max_tokens=32768)
@@ -242,8 +246,8 @@ def ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking,
         # 安全过滤：剔除无交易权限的板块股票（用户无权限买入，依据 SCREENING_CONFIG）
         if result.get("stocks"):
             result["stocks"] = [s for s in result["stocks"] if not is_excluded_stock(s.get("code", ""))[0]]
-        # 后置可买性兜底：剔除无法买入的涨停/接近涨停票，必要时从行情兜底
-        result = _apply_buyable_filter(result, quotes)
+        # 后置可买性兜底：剔除无法买入的涨停/接近涨停票，必要时从行情补齐到 pick_count
+        result = _apply_buyable_filter(result, quotes, pad=True)
         return {"success": True, **result}
     except json.JSONDecodeError as e:
         # JSON解析失败：保存原始内容以便调试
@@ -438,11 +442,15 @@ def ai_screen(query, quotes, sentiment, sector_ranking, fund_flow, concept_ranki
         return {"success": False, "error": str(e)}
 
 
-def _apply_buyable_filter(result, quotes):
+def _apply_buyable_filter(result, quotes, pad=False):
     """后置可买性兜底：涨停/接近涨停票不进主推荐，仅保留≤board_watch_max只到打板观察区。
 
-    若主推荐被全部清空（多半是涨停/高位），则从行情兜底筛选可买入标的。"""
+    - 主推荐被全部清空（多半是涨停/高位）：从行情兜底筛选可买入标的
+    - pad=True（一键选股）：主推荐不足 pick_count 时，从可买入候选补齐到 pick_count
+      以保证最终稳定返回 pick_count 只（用户要求数量=10）
+    """
     c = SELECTION_CONFIG
+    n = c["pick_count"]
     stocks = result.get("stocks") or []
     main, watch = [], []
     for s in stocks:
@@ -464,40 +472,60 @@ def _apply_buyable_filter(result, quotes):
 
     if not main and stocks:
         # 主推荐被全部清空，兜底从行情筛选可买入标的
-        result["stocks"] = _get_fallback_picks(quotes, 8)
+        result["stocks"] = _get_fallback_picks(quotes, n)
         result["note"] = "AI主推标的因涨停/接近涨停无法买入，已自动切换为可买入标的兜底推荐"
     else:
-        result["stocks"] = main[:8]
+        result["stocks"] = main[:n]
+        # 一键选股模式：不足 pick_count 时，从可买入候选补齐，确保返回数量稳定
+        if pad and len(result["stocks"]) < n:
+            seen = {s.get("code") for s in result["stocks"]}
+            for f in _get_fallback_picks(quotes, n):
+                if f.get("code") not in seen and len(result["stocks"]) < n:
+                    result["stocks"].append(f)
+                    seen.add(f.get("code"))
+            if len(result["stocks"]) < n:
+                result["note"] = (result.get("note", "") + "；可买入候选不足，返回数量少于" + str(n) + "只").strip("；")
+            else:
+                result["note"] = (result.get("note", "") + "；主推不足" + str(n) + "只，已用可买入候选补齐").strip("；")
 
     if watch:
         result["watch"] = watch[:c["board_watch_max"]]
     return result
 
 
-def _get_fallback_picks(quotes, n=8):
-    """兜底选股：当 AI 主推标的全部涨停/高位无法买入时，直接从行情中筛选可买入标的。"""
+def _get_fallback_picks(quotes, n=10):
+    """兜底/补齐选股：从行情中筛选可买入标的（未涨停、非无权限板块、有成交）。
+
+    优先选「资金健康 + 技术偏多」的；行情缺量比/换手字段时退化为「仅未涨停」也能补齐。
+    """
+    c = SELECTION_CONFIG
     cands = []
     for code, q in quotes.items():
         if is_excluded_stock(code)[0]:
             continue
-        change = q.get("change_pct", 0)
-        vr = q.get("vol_ratio", 0)
-        to = q.get("turnover_pct", 0)
-        amt = q.get("amount_wan", 0)
-        if not is_buyable_candidate(change, vr, to, amt):
+        change = q.get("change_pct", 0) or 0
+        if change >= c["near_limit_pct"]:      # 排除涨停/接近涨停
+            continue
+        price = q.get("price", 0) or 0
+        if price <= 0:
             continue
         tech = q.get("tech")
         score = tech.get("score", 0) if tech else 0
-        cands.append((score, code, q))
-    cands.sort(reverse=True)
+        amt = q.get("amount_wan", 0) or 0
+        fund_ok = passes_fund_filter(q.get("vol_ratio", 0), q.get("turnover_pct", 0), amt)
+        cands.append({"fund_ok": fund_ok, "score": score, "amt": amt, "code": code, "q": q})
+    # 先按资金健康、再按技术分、再按成交额排序
+    cands.sort(key=lambda x: (x["fund_ok"], x["score"], x["amt"]), reverse=True)
     picks = []
-    for score, code, q in cands[:n]:
+    for cd in cands[:n]:
+        q = cd["q"]
         price = q.get("price", 0) or 0
         picks.append({
-            "code": code,
-            "name": q.get("name", code),
-            "score": max(50, min(90, 50 + score // 3)),
-            "reason": "系统兜底筛选：未涨停、资金活跃、技术偏多，当前价位具备可买入性（AI主推标的因涨停无法买入）",
+            "code": cd["code"],
+            "name": q.get("name", cd["code"]),
+            "score": max(50, min(90, 50 + cd["score"] // 3)),
+            "reason": ("系统兜底筛选：未涨停、资金健康、技术偏多，当前价位具备可买入性"
+                       if cd["fund_ok"] else "系统兜底筛选：未涨停、当前价位可买入（资金数据不足，按技术信号补齐）"),
             "entry_price": f"{price:.2f}附近",
             "hold_days": "3",
             "stop_loss": f"{price * 0.95:.2f}",

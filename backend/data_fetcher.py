@@ -116,12 +116,14 @@ def fetch_international():
     {
       "us_indices": [{"name","code","price","change_pct"}, ...],  # 纳斯达克/道琼斯/标普500
       "usdcny": {"name","code","price","change_pct"} | None,      # 美元兑人民币
+      "commodities": [{"name","code","price","change_pct"}, ...],  # 原油(WTI/布伦特)/铜 等大宗
       "updated": "2026-07-15 01:43"
     }
     失败时返回 None（调用方降级为「国际数据暂缺，依国内因素研判」）。
-    扩展点: 如需原油/铜等大宗商品，可在 codes 中加入对应腾讯全球代码并解析。
+    大宗商品: 腾讯全球期货行情 hf_CL(纽约原油/WTI) / hf_OIL(布伦特原油) / hf_HG(美铜)，
+    格式为逗号分隔（指数/外汇为 ~ 分隔），解析分支见下方。
     """
-    codes = ["usIXIC", "usDJI", "usINX", "fxUSDCNY"]
+    codes = ["usIXIC", "usDJI", "usINX", "fxUSDCNY", "hf_CL", "hf_OIL", "hf_HG"]
     url = "https://qt.gtimg.cn/q=" + ",".join(codes)
     req = urllib.request.Request(url)
     req.add_header("User-Agent", UA)
@@ -132,35 +134,52 @@ def fetch_international():
         print(f"[WARN] 国际行情请求失败: {e}")
         return None
 
-    result = {"us_indices": [], "usdcny": None, "updated": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    result = {"us_indices": [], "usdcny": None, "commodities": [], "updated": datetime.now().strftime("%Y-%m-%d %H:%M")}
     try:
         for line in data.strip().split(";"):
             line = line.strip()
             if not line or "=" not in line or '"' not in line:
                 continue
-            key = line.split("=")[0]                     # v_usIXIC / v_fxUSDCNY
-            code = key.split("_")[-1]                    # usIXIC / fxUSDCNY
-            vals = line.split('"')[1].split("~")
-            if len(vals) < 14:
-                continue
-            name = vals[1]
-            price = float(vals[3]) if vals[3] else 0
-            # 涨跌幅: 指数用 (现价-昨收)/昨收; 外汇 fxUSDCNY 用 (现价-前收参考)/前收
-            if code.startswith("fx"):
-                prev = float(vals[6]) if vals[6] else 0
+            key = line.split("=")[0]                     # v_usIXIC / v_fxUSDCNY / v_hf_CL
+            code = key[2:] if key.startswith("v_") else key   # 去掉 v_ 前缀: usIXIC / fxUSDCNY / hf_CL
+            raw = line.split('"')[1]
+            item = None
+            if "~" in raw:
+                # 指数/外汇格式：~ 分隔，[1]名称 [3]现价 [4]/[6]昨收
+                vals = raw.split("~")
+                if len(vals) < 14:
+                    continue
+                name = vals[1]
+                price = float(vals[3]) if vals[3] else 0
+                # 涨跌幅: 指数用 (现价-昨收)/昨收; 外汇 fxUSDCNY 用 (现价-前收参考)/前收
+                if code.startswith("fx"):
+                    prev = float(vals[6]) if vals[6] else 0
+                else:
+                    prev = float(vals[4]) if vals[4] else 0
+                change_pct = round((price - prev) / prev * 100, 2) if prev else 0.0
+                item = {"name": name, "code": code, "price": price, "change_pct": change_pct}
             else:
-                prev = float(vals[4]) if vals[4] else 0
-            change_pct = round((price - prev) / prev * 100, 2) if prev else 0.0
-            item = {"name": name, "code": code, "price": price, "change_pct": change_pct}
+                # 期货(大宗商品)格式：逗号分隔 [0]现价 [1]涨跌幅% [7]昨收 [13]名称
+                vals = raw.split(",")
+                if len(vals) < 8:
+                    continue
+                price = float(vals[0]) if vals[0] else 0
+                change_pct = float(vals[1]) if vals[1] else 0.0
+                name = vals[13] if len(vals) > 13 and vals[13] else code
+                item = {"name": name, "code": code, "price": price, "change_pct": change_pct}
+            if item is None:
+                continue
             if code.startswith("fx"):
                 result["usdcny"] = item
+            elif code.startswith("hf"):
+                result["commodities"].append(item)
             else:
                 result["us_indices"].append(item)
     except Exception as e:
         print(f"[WARN] 国际行情解析失败: {e}")
         return None
 
-    if not result["us_indices"] and not result["usdcny"]:
+    if not result["us_indices"] and not result["usdcny"] and not result["commodities"]:
         return None
     return result
 

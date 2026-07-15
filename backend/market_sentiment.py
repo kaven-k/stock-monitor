@@ -40,6 +40,90 @@ def _sina_get(url, timeout=10):
             time.sleep(1)
 
 
+# ---- 腾讯全市场涨跌数据源（替代不可用的东财 push2）----
+# 腾讯 qt.gtimg.cn 单次可接受大量代码，gbk 解码，格式稳定不封 IP
+
+def _generate_a_share_codes():
+    """生成全 A 股代码列表（约 5300 只活跃股票）"""
+    codes = []
+    # 上海主板 600000-600xxx / 601000-601xxx / 603000-603xxx
+    for prefix in ["600", "601", "603"]:
+        for i in range(0, 1000):
+            codes.append(f"sh{prefix}{i:03d}")
+    # 上海主板 605 (近年新股)
+    for i in range(0, 200):
+        codes.append(f"sh605{i:03d}")
+    # 上海科创板 688
+    for i in range(0, 700):
+        codes.append(f"sh688{i:03d}")
+    # 深圳主板/中小板 000001-000xxx / 001001-001xxx / 002001-002xxx / 003001-003xxx
+    for prefix in ["000", "001", "002", "003"]:
+        for i in range(1, 1000):
+            codes.append(f"sz{prefix}{i:03d}")
+    # 深圳创业板 300/301
+    for prefix in ["300", "301"]:
+        for i in range(0, 1000):
+            codes.append(f"sz{prefix}{i:03d}")
+    # 北交所 bj 前缀腾讯不支持良好，跳过（仅沪深两市已覆盖 ~5300 只活跃股）
+    return codes
+
+
+def _fetch_tencent_batch(codes, batch_size=120):
+    """分批从腾讯获取股票行情，返回 {code: change_pct} 字典（4线程并行，单批最多120只）"""
+    import urllib.request
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    result = {}
+    total = len(codes)
+    # 分批
+    batches = []
+    for start in range(0, total, batch_size):
+        batches.append(codes[start:start + batch_size])
+
+    def fetch_one_batch(batch):
+        """抓取一批，返回 {code: change_pct} 局部字典"""
+        local = {}
+        url = "https://qt.gtimg.cn/q=" + ",".join(batch)
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        try:
+            data = urllib.request.urlopen(req, timeout=10).read().decode("gbk")
+        except Exception:
+            return local
+        for line in data.strip().split(";"):
+            line = line.strip()
+            if not line or "=" not in line or '"' not in line:
+                continue
+            try:
+                code = line.split("=")[0].split("_")[-1]
+                vals = line.split('"')[1].split("~")
+                if len(vals) < 5 or not vals[3]:
+                    continue
+                price = float(vals[3])
+                prev = float(vals[4])
+                if prev == 0:
+                    continue
+                local[code] = round((price - prev) / prev * 100, 2)
+            except (ValueError, IndexError, ZeroDivisionError):
+                continue
+        return local
+
+    # 4 线程并行抓取
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [executor.submit(fetch_one_batch, b) for b in batches]
+        for future in as_completed(futures):
+            result.update(future.result())
+
+    return result
+
+
+def _fetch_all_market_changes_tencent():
+    """使用腾讯批量接口获取全市场涨跌幅（push2.eastmoney.com 替代方案）"""
+    codes = _generate_a_share_codes()
+    changes_dict = _fetch_tencent_batch(codes, batch_size=120)
+    if not changes_dict:
+        return None
+    return list(changes_dict.values())
+
+
 def _emdatah5_get(url, params=None, timeout=10):
     """东方财富 emdatah5 API 请求"""
     for attempt in range(3):
@@ -83,59 +167,66 @@ def _fetch_one_page(url, base_params, page, page_size=100):
 
 def _fetch_all_market_changes(force_refresh=False):
     """
-    分页遍历全市场所有A股，返回所有股票的涨跌幅列表
-    使用 5 线程并行 + 5 分钟缓存
-    每页 100 条，遍历全部 ~5500 只股票
+    获取全市场所有A股的涨跌幅列表（优先腾讯，降级东财push2）
+    返回 [float, ...] 涨跌幅列表，或 None（全部失败时）
+    使用 5 分钟缓存。
     """
     with _full_market_cache["lock"]:
         now = time.time()
         if not force_refresh and _full_market_cache["data"] is not None and (now - _full_market_cache["timestamp"]) < _CACHE_TTL:
             return _full_market_cache["data"]
 
-    url = "https://push2.eastmoney.com/api/qt/clist/get"
-    base_params = {
-        "fid": "f3", "po": "1", "np": "1",
-        "fltt": "2", "invt": "2",
-        "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
-        "fields": "f3",
-    }
+    result = None
 
-    # 第一步：获取总数
-    params_count = base_params.copy()
-    params_count["pz"] = "1"
-    params_count["pn"] = "1"
+    # === 主方案：腾讯 qt.gtimg.cn 批量接口（稳定、不封 IP）===
     try:
-        count_data = _emdatah5_get(url, params_count, timeout=8)
-        total = count_data.get("data", {}).get("total", 0) if count_data else 0
-    except Exception:
-        total = 0
+        print("[Sentiment] 尝试腾讯全市场数据源...")
+        tencent_result = _fetch_all_market_changes_tencent()
+        if tencent_result and len(tencent_result) > 100:
+            result = tencent_result
+            print(f"[Sentiment] 腾讯成功: {len(result)} 只股票")
+    except Exception as e:
+        print(f"[Sentiment] 腾讯全市场数据失败: {e}")
 
-    if total == 0:
-        return None
+    # === 降级方案：东方财富 push2.eastmoney.com（可能被拒）===
+    if result is None:
+        try:
+            print("[Sentiment] 尝试东财 push2 降级方案...")
+            url = "https://push2.eastmoney.com/api/qt/clist/get"
+            base_params = {
+                "fid": "f3", "po": "1", "np": "1",
+                "fltt": "2", "invt": "2",
+                "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",
+                "fields": "f3",
+            }
+            params_count = base_params.copy()
+            params_count["pz"] = "1"
+            params_count["pn"] = "1"
+            count_data = _emdatah5_get(url, params_count, timeout=8)
+            total = count_data.get("data", {}).get("total", 0) if count_data else 0
+            if total > 0:
+                page_size = 100
+                total_pages = (total + page_size - 1) // page_size
+                all_changes = []
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    futures = {}
+                    for page in range(1, total_pages + 1):
+                        future = executor.submit(_fetch_one_page, url, base_params, page, page_size)
+                        futures[future] = page
+                    for future in as_completed(futures):
+                        page = futures[future]
+                        try:
+                            changes = future.result()
+                            all_changes.extend(changes)
+                        except Exception as e:
+                            print(f"[Sentiment] 东财第{page}页抓取失败: {e}")
+                if all_changes:
+                    result = all_changes
+                    print(f"[Sentiment] 东财成功: {len(result)} 只股票")
+        except Exception as e:
+            print(f"[Sentiment] 东财 push2 也失败: {e}")
 
-    page_size = 100
-    total_pages = (total + page_size - 1) // page_size
-
-    # 第二步：分页并行抓取
-    all_changes = []
-    # 用线程池并行抓取，最多 5 个并发
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {}
-        for page in range(1, total_pages + 1):
-            future = executor.submit(_fetch_one_page, url, base_params, page, page_size)
-            futures[future] = page
-
-        for future in as_completed(futures):
-            page = futures[future]
-            try:
-                changes = future.result()
-                all_changes.extend(changes)
-            except Exception as e:
-                print(f"[Sentiment] 第{page}页抓取失败: {e}")
-
-    result = all_changes if all_changes else None
-
-    # 缓存
+    # 缓存结果（包括 None，避免短时间内反复重试失败的源）
     with _full_market_cache["lock"]:
         _full_market_cache["data"] = result
         _full_market_cache["timestamp"] = time.time()
@@ -163,7 +254,7 @@ def get_full_market_breadth():
             "up_count": up, "down_count": down, "flat_count": flat,
             "total": total, "up_ratio": round(up / total * 100, 1) if total else 0,
             "time": datetime.now().strftime("%H:%M:%S"),
-            "source": f"全市场(东财) {total}只A股",
+            "source": f"全市场(腾讯) {total}只A股",
         }
     except Exception as e:
         print(f"[Sentiment] 全市场涨跌数据获取失败: {e}")
@@ -187,7 +278,7 @@ def get_full_market_limit_stats():
             "limit_up": limit_up, "limit_down": limit_down,
             "net": limit_up - limit_down,
             "time": datetime.now().strftime("%H:%M:%S"),
-            "source": f"全市场(东财) {len(all_changes)}只A股",
+            "source": f"全市场(腾讯) {len(all_changes)}只A股",
         }
     except Exception as e:
         print(f"[Sentiment] 全市场涨跌停数据获取失败: {e}")
@@ -351,14 +442,22 @@ def get_sentiment_index(quotes=None):
     })
     score = score * 0.75 + limit_score * 0.25
     
-    # 3. 平均涨跌幅
-    all_changes = [q.get("change_pct", 0) for q in quotes.values()]
+    # 3. 平均涨跌幅（优先全市场数据，降级为监控股票）
+    full_changes = _fetch_all_market_changes()  # 有缓存，不会重复请求
+    if full_changes and len(full_changes) > 100:
+        # 全市场数据可用：基于全部 A 股计算
+        all_changes = full_changes
+        sample_label = f"全市场({len(all_changes)}只)"
+    else:
+        # 降级为监控股票
+        all_changes = [q.get("change_pct", 0) for q in quotes.values()]
+        sample_label = f"监控({len(all_changes)}只)"
     avg_change = round(sum(all_changes) / len(all_changes), 2) if all_changes else 0
     # 映射：-5%→0, 0%→50, +5%→100
     avg_score = min(100, max(0, 50 + avg_change * 10))
     factors.append({
         "name": "平均涨幅",
-        "value": f"{avg_change}%",
+        "value": f"{avg_change}% ({sample_label})",
         "score": round(avg_score, 1),
         "weight": 20,
     })

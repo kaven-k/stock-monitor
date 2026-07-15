@@ -139,6 +139,7 @@ SELECTION_CONFIG = {
     "turnover_max": 15.0,            # 换手率健康上界(%)
     "amount_min_wan": 10000,         # 最小日成交额(万)=1亿，排除僵尸股
     "board_watch_max": 2,            # 打板观察区最多保留几只
+    "pick_count": 10,                # 一键选股最终推荐数量（主推列表长度）
 }
 
 
