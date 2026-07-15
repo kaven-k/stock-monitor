@@ -162,11 +162,9 @@ def passes_fund_filter(vol_ratio, turnover_pct, amount_wan):
 
 
 def is_buyable_candidate(change_pct, vol_ratio, turnover_pct, amount_wan, tech_score=None):
-    """综合判定是否为『可买入候选』：未涨停/未接近涨停 + 资金健康 (+ 技术多头优先)"""
+    """综合判定是否为『可买入候选』：未涨停/未接近涨停 + 资金健康（技术面作为排序偏好，不再硬卡）"""
     if is_limit_up(change_pct):
         return False
     if not passes_fund_filter(vol_ratio, turnover_pct, amount_wan):
-        return False
-    if tech_score is not None and tech_score <= 0:
         return False
     return True

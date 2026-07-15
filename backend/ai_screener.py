@@ -177,13 +177,14 @@ def ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking,
 
 【你的任务】
 请从『可买入候选池』中精选{SELECTION_CONFIG['pick_count']}只最适合短线（1-5天持有）操作的股票。
+⚠️ 必须返回满{SELECTION_CONFIG['pick_count']}只：候选池已足够大，请尽量覆盖不同板块/主线，不要把数量凑不够；个别次优标的（资金温和、技术偏多但非最强主线）也可纳入，但一律不得推荐涨幅≥7%的票。
 {build_exclusion_prompt()}
 
 【选股铁律·必须严格遵守】
 1. 默认只从『可买入候选池』选择：未涨停、未接近涨停（涨幅<7%），且量比/换手/成交额处于健康区间。
 2. 已涨停（≥9.8%）的股票一律不推荐买入——次日无法以合理成本介入，实战意义极低，仅作板块强度观察。
 3. 『打板观察区』的票（接近涨停）仅作风险提示，不得进入主推荐列表；如确需保留观察，最多2只且必须明确标注『高风险·不可买入』。
-4. 每只标的必须同时具备：所属板块今日强势（主线）+ 资金持续流入（量比/换手健康）+ 技术面偏多（金叉/多头/共振）。三者至少满足两项，且板块主线为必要项。
+4. 选股优先级：板块主线强 > 资金持续流入（量比/换手健康）> 技术面偏多（金叉/多头/共振）。三者至少满足一项即可入选；板块主线为强烈加分项但非强制——若某标的资金与技术共振极强，即使非当前最强主线也可入选。
 5. 优先考虑强板块中的『次龙头/早启动』标的，而非已封板的绝对龙头——它们往往有更舒适的买点和更大上行空间。
 
 【每只推荐必须包含的买入逻辑（reason，80-150字）】
@@ -288,14 +289,21 @@ def _extract_hot_stocks(quotes, sector_ranking, fund_flow):
             if lc and lc != "-":
                 leader_codes.add(lc)
 
-    # 候选集：领涨股 + 涨幅前25 + 成交额前15（覆盖全市场，排除无权限板块）
+    # 候选集：领涨股 + 涨幅前40 + 成交额前25 + 技术偏多Top20（放大池子，覆盖全市场，排除无权限板块）
     cand = set(leader_codes)
-    for code, _ in sorted(quotes.items(), key=lambda x: x[1].get("change_pct", 0), reverse=True)[:25]:
+    for code, _ in sorted(quotes.items(), key=lambda x: x[1].get("change_pct", 0), reverse=True)[:40]:
         if not is_excluded_stock(code)[0]:
             cand.add(code)
-    for code, _ in sorted(quotes.items(), key=lambda x: x[1].get("amount_wan", 0), reverse=True)[:15]:
+    for code, _ in sorted(quotes.items(), key=lambda x: x[1].get("amount_wan", 0), reverse=True)[:25]:
         if not is_excluded_stock(code)[0]:
             cand.add(code)
+    # 补充：技术面偏多（SignalEngine 评分>0）的标的，确保潜力股进入候选池
+    tech_ranked = sorted(
+        (c for c in quotes
+         if not is_excluded_stock(c)[0] and (quotes[c].get("tech") or {}).get("score", 0) > 0),
+        key=lambda c: quotes[c].get("tech", {}).get("score", 0), reverse=True
+    )[:20]
+    cand.update(tech_ranked)
     cand = [c for c in cand if c in quotes]
 
     buyable, watch = [], []
@@ -328,7 +336,7 @@ def _extract_hot_stocks(quotes, sector_ranking, fund_flow):
     # ---- 可买入候选池 ----
     if buyable:
         lines.append("【可买入候选池·重点分析对象（未涨停、资金健康、技术偏多）】")
-        for code, q, tech in buyable[:30]:
+        for code, q, tech in buyable[:60]:
             tags = []
             if code in leader_codes:
                 tags.append("板块强势")
