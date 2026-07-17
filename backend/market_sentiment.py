@@ -470,28 +470,19 @@ def get_index_data():
 def get_sentiment_index(quotes=None):
     """
     综合市场情绪指标 (恐慌/贪婪指数 0-100)
-    
-    基于监控股票数据计算：
-    1. 涨跌比 (权重 40%)
-    2. 涨停跌停差 (权重 25%)
-    3. 平均涨跌幅 (权重 20%)
-    4. 成交量活跃度 (权重 15%)
-    
+
+    1. 涨跌比 (权重 40%) — 全市场数据，无需监控
+    2. 涨停跌停差 (权重 25%) — 全市场数据，无需监控
+    3. 平均涨跌幅 (权重 20%) — 全市场数据，无需监控
+    4. 成交量活跃度 (权重 15%) — 需逐股数据，仅监控启动时激活
+
     Returns:
         {score, level, level_text, level_color, factors, time}
     """
-    if not quotes:
-        return {
-            "score": 50, "level": "neutral",
-            "level_text": "无数据 ⚖️", "level_color": "#868e96",
-            "factors": [],
-            "time": datetime.now().strftime("%H:%M:%S"),
-        }
-    
     score = 50.0
     factors = []
-    
-    # 1. 涨跌比
+
+    # 1. 涨跌比 — 全市场优先
     breadth = get_market_breadth(quotes)
     if breadth["total"] > 0:
         up_ratio = breadth["up_ratio"]
@@ -503,8 +494,8 @@ def get_sentiment_index(quotes=None):
             "weight": 40,
         })
         score = score * 0.60 + breadth_score * 0.40
-    
-    # 2. 涨停跌停差
+
+    # 2. 涨停跌停差 — 全市场优先
     limit = get_limit_stats(quotes)
     net = limit["net"]
     limit_score = min(100, max(0, 50 + net * 10))
@@ -515,47 +506,56 @@ def get_sentiment_index(quotes=None):
         "weight": 25,
     })
     score = score * 0.75 + limit_score * 0.25
-    
-    # 3. 平均涨跌幅（优先全市场数据，降级为监控股票）
-    full_changes = _fetch_all_market_changes()  # 有缓存，不会重复请求
+
+    # 3. 平均涨跌幅 — 优先全市场，降级监控
+    full_changes = _fetch_all_market_changes()
     if full_changes and len(full_changes) > 100:
-        # 全市场数据可用：基于全部 A 股计算
         all_changes = full_changes
         sid, sname = _current_source()
         src_tag = f"{sid}号·{sname}" if sid else "全市场"
         sample_label = f"{src_tag}({len(all_changes)}只)"
-    else:
-        # 降级为监控股票
+    elif quotes:
         all_changes = [q.get("change_pct", 0) for q in quotes.values()]
         sample_label = f"监控({len(all_changes)}只)"
-    avg_change = round(sum(all_changes) / len(all_changes), 2) if all_changes else 0
-    # 映射：-5%→0, 0%→50, +5%→100
-    avg_score = min(100, max(0, 50 + avg_change * 10))
-    factors.append({
-        "name": "平均涨幅",
-        "value": f"{avg_change}% ({sample_label})",
-        "score": round(avg_score, 1),
-        "weight": 20,
-    })
-    score = score * 0.80 + avg_score * 0.20
-    
-    # 4. 活跃度（换手率均值）
-    turnovers = [q.get("turnover_pct", 0) for q in quotes.values() if q.get("turnover_pct", 0) > 0]
-    avg_turnover = round(sum(turnovers) / len(turnovers), 1) if turnovers else 0
-    # 换手率 < 1% 偏冷, 1-3% 正常, > 5% 偏热
-    if avg_turnover < 1:
-        active_score = max(0, avg_turnover * 30)
-    elif avg_turnover < 5:
-        active_score = 30 + (avg_turnover - 1) * 15
     else:
-        active_score = min(100, 90 + (avg_turnover - 5) * 2)
-    factors.append({
-        "name": "活跃度",
-        "value": f"换手{avg_turnover}%",
-        "score": round(active_score, 1),
-        "weight": 15,
-    })
-    score = score * 0.85 + active_score * 0.15
+        all_changes = []
+    if all_changes:
+        avg_change = round(sum(all_changes) / len(all_changes), 2)
+        avg_score = min(100, max(0, 50 + avg_change * 10))
+        factors.append({
+            "name": "平均涨幅",
+            "value": f"{avg_change}% ({sample_label})",
+            "score": round(avg_score, 1),
+            "weight": 20,
+        })
+        score = score * 0.80 + avg_score * 0.20
+
+    # 4. 活跃度 — 需监控逐股数据，可选
+    if quotes:
+        turnovers = [q.get("turnover_pct", 0) for q in quotes.values() if q.get("turnover_pct", 0) > 0]
+        avg_turnover = round(sum(turnovers) / len(turnovers), 1) if turnovers else 0
+        if avg_turnover < 1:
+            active_score = max(0, avg_turnover * 30)
+        elif avg_turnover < 5:
+            active_score = 30 + (avg_turnover - 1) * 15
+        else:
+            active_score = min(100, 90 + (avg_turnover - 5) * 2)
+        factors.append({
+            "name": "活跃度",
+            "value": f"换手{avg_turnover}%",
+            "score": round(active_score, 1),
+            "weight": 15,
+        })
+        score = score * 0.85 + active_score * 0.15
+
+    # 因子全空 → 真正无数据
+    if not factors:
+        return {
+            "score": 50, "level": "neutral",
+            "level_text": "⚖️ 数据源暂不可用", "level_color": "#868e96",
+            "factors": [],
+            "time": datetime.now().strftime("%H:%M:%S"),
+        }
     
     score = round(score, 1)
     
