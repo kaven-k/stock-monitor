@@ -1,0 +1,27 @@
+{
+  "accuracy": 74.5,
+  "precision": 75.0,
+  "recall": 73.7,
+  "f1": 74.3,
+  "auc": 82.4,
+  "test_samples": 8694,
+  "positive_ratio": 50.1,
+  "scale_pos_weight": 1.0,
+  "feature_names": [
+    "gap_pct",
+    "today_chg",
+    "day_range",
+    "upper_shadow",
+    "lower_shadow",
+    "vol_ratio",
+    "pri_5d_chg",
+    "pri_10d_chg",
+    "pri_1d_chg",
+    "up_days_5",
+    "price_position",
+    "vol_trend",
+    "vs_ma5",
+    "vs_ma10"
+  ],
+  "hold_days": 2
+}

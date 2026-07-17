@@ -323,19 +323,49 @@ def _extract_hot_stocks(quotes, sector_ranking, fund_flow):
         if is_buyable_candidate(change, vr, to, amt, tech_score):
             buyable.append((code, q, tech))
 
-    # 可买入候选池：技术评分优先，其次涨幅甜区(0.5%-6.5%)优先
-    def _buyable_sort_key(item):
-        _, q, tech = item
-        score = tech.get("score", 0) if tech else 0
-        return (score, q.get("change_pct", 0))
-    buyable.sort(key=_buyable_sort_key, reverse=True)
+    # === XGBoost 排序（v3.0）：用训练好的模型预测每只候选的 2 天盈利概率 ===
+    xgb_proba = {}
+    try:
+        from xgb_ranker import _load_model, build_features
+        xgb_model = _load_model()
+        if xgb_model is not None:
+            import sqlite3, statistics
+            db = sqlite3.connect(os.path.join(os.path.dirname(os.path.abspath(__file__)), "stock_monitor.db"))
+            for code, q, tech in buyable + list(watch):
+                rows = db.execute(
+                    "SELECT trade_date,open,high,low,close,volume FROM price_history WHERE code=? ORDER BY trade_date",
+                    (code,)
+                ).fetchall()
+                if not rows or len(rows) < 20:
+                    continue
+                k = [(r[0], float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5])) for r in rows]
+                feats = build_features(k, len(k) - 1)
+                import numpy as np
+                X = np.array(feats, dtype=np.float32).reshape(1, -1)
+                xgb_proba[code] = float(xgb_model.predict_proba(X)[0][1])
+            db.close()
+            if xgb_proba:
+                # 用 XGBoost 概率排序，替代纯技术分排序
+                buyable.sort(key=lambda item: xgb_proba.get(item[0], 0.5), reverse=True)
+    except Exception as e:
+        # 模型不可用时回退到技术分排序
+        pass
+    
+    if not xgb_proba:
+        # 降级排序：技术评分优先
+        def _buyable_sort_key(item):
+            _, q, tech = item
+            score = tech.get("score", 0) if tech else 0
+            return (score, q.get("change_pct", 0))
+        buyable.sort(key=_buyable_sort_key, reverse=True)
     # 打板观察区：仅保留最强的 board_watch_max 只
     watch = watch[:SELECTION_CONFIG["board_watch_max"]]
 
     lines = []
     # ---- 可买入候选池 ----
     if buyable:
-        lines.append("【可买入候选池·重点分析对象（未涨停、资金健康、技术偏多）】")
+        xgb_tag = " [已按 XGBoost 短线盈利概率排序]" if xgb_proba else ""
+        lines.append(f"【可买入候选池·重点分析对象（未涨停、资金健康、技术偏多）{xgb_tag}】")
         for code, q, tech in buyable[:60]:
             tags = []
             if code in leader_codes:
