@@ -4,26 +4,23 @@ import sqlite3, time, os, sys
 # 直接生成已知存在的股票代码（用market_sentiment中的逻辑）
 def generate_real_codes():
     codes = []
-    # 沪市
-    for pfx in [600000, 601000, 603000, 605000]:
-        for i in range(1000):
-            codes.append(str(pfx + i))
-    # 深市主板
-    for pfx in [0, 1000, 2000, 3000]:
-        for i in range(1000):
-            codes.append("00" + str(pfx + i).zfill(4))
-    # 创业板
-    for i in range(1000):
-        codes.append("300" + str(i).zfill(3))
-    for i in range(600):
-        codes.append("301" + str(i).zfill(3))
+    # 沪市 (6开头)
+    for pfx in ['600', '601', '603', '605']:
+        codes.extend(f"{pfx}{i:03d}" for i in range(1000))
     # 科创板
-    for i in range(800):
-        codes.append("688" + str(i).zfill(3))
+    codes.extend(f"688{i:03d}" for i in range(800))
+    # 深市主板/中小板
+    codes.extend(f"000{i:03d}" for i in range(1000))
+    codes.extend(f"001{i:03d}" for i in range(500))
+    codes.extend(f"002{i:03d}" for i in range(1000))
+    codes.extend(f"003{i:03d}" for i in range(100))
+    # 创业板
+    codes.extend(f"300{i:03d}" for i in range(1000))
+    codes.extend(f"301{i:03d}" for i in range(600))
     return codes
 
 if __name__ == '__main__':
-    target_count = 6000  # 全市场
+    target_count = 99999  # 不限量，全跑完
 all_real = generate_real_codes()
 print(f"候选: {len(all_real)} 只")
 
