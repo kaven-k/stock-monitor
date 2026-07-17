@@ -8,9 +8,7 @@
 // alert("我是新的 api.js");
 // 动态获取 API 地址：与页面同源（同协议+同域名+同端口）
 const _origin = window.location.origin;
-// const API_BASE = (_origin && _origin !== 'null') ? _origin + '/api/v1' : 'http://localhost:5000/api/v1';
-//直接固定  请求后端5000/api/v1
-const API_BASE = 'http://localhost:5000/api/v1'; 
+const API_BASE = (_origin && _origin !== 'null') ? _origin + '/api/v1' : 'http://localhost:5000/api/v1';
 // console.log("=== API BASE ===", API_BASE);
 
 
