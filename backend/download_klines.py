@@ -23,7 +23,7 @@ def generate_real_codes():
     return codes
 
 if __name__ == '__main__':
-    target_count = 500
+    target_count = 6000  # 全市场
 all_real = generate_real_codes()
 print(f"候选: {len(all_real)} 只")
 
