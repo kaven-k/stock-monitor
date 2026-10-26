@@ -1,0 +1,42 @@
+{
+  "days": 185,
+  "topk_daily_mean": 0.467,
+  "market_daily_mean": -0.098,
+  "excess_daily_mean": 0.565,
+  "cum_return_topk": 127.34,
+  "cum_return_market": -18.37,
+  "win_rate": 63.2,
+  "beat_market_rate": 65.4,
+  "cost_per_day": 0.15,
+  "net_daily_mean": 0.317,
+  "cum_return_net": 72.42,
+  "random_daily_mean": -0.101,
+  "excess_vs_random": 0.568,
+  "splits": [
+    {
+      "split": 1,
+      "auc": 50.8,
+      "train_n": 224433,
+      "test_n": 313845
+    },
+    {
+      "split": 2,
+      "auc": 48.3,
+      "train_n": 538278,
+      "test_n": 314001
+    },
+    {
+      "split": 3,
+      "auc": 48.2,
+      "train_n": 852279,
+      "test_n": 309602
+    }
+  ],
+  "config": {
+    "hold": 1,
+    "entry": "close",
+    "top_k": 10,
+    "market": true,
+    "fund": false
+  }
+}
