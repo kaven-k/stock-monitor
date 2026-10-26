@@ -537,8 +537,14 @@ def _enrich_tech_signals(quotes, leader_codes, max_codes=45):
         print(f"[AI] 技术增强并行计算失败(降级): {e}")
 
 
-def _gather_market_data():
-    """收集全市场数据供 AI 分析（监控股票 + 全市场板块龙头 + 技术面增强 + 国际行情）"""
+def _gather_market_data(use_pool=True):
+    """
+    收集全市场数据供 AI 分析
+
+    v7 变更：候选池来源由「监控列表 + 板块龙头」升级为
+    「全市场快照 → 主线板块 → 成份股扩散 → 过滤 → 排序」的候选池链。
+    原监控列表仍会并入（不丢原有功能），但不再是唯一来源。
+    """
     stocks, quotes = _get_monitor_data()
 
     from market_sentiment import get_market_thermometer
@@ -578,7 +584,26 @@ def _gather_market_data():
     # 国际行情：美股三大指数 + 美元人民币（失败返回 None，由提示词降级）
     international = fetch_international()
 
-    return quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices, international
+    # ===== v7：主线扩散候选池（替代/扩充原「监控列表+龙头」小池子）=====
+    pool_result = None
+    if use_pool:
+        try:
+            from candidate_pool import build_candidate_pool, pool_to_quotes
+            pool_result = build_candidate_pool(top_n=35)
+            if pool_result and pool_result.get("success"):
+                pool_quotes = pool_to_quotes(pool_result)
+                if pool_quotes:
+                    before = len(quotes)
+                    quotes = {**quotes, **pool_quotes}
+                    print(f"[AI] 候选池接入: {before} → {len(quotes)} 只 "
+                          f"(主线: {', '.join(s['name'] for s in pool_result.get('sectors', [])[:3])})")
+            else:
+                print(f"[AI] 候选池为空，沿用监控列表+龙头（{len(quotes)} 只）")
+        except Exception as e:
+            print(f"[AI] 候选池构建失败，降级沿用原池: {e}")
+            pool_result = {"error": str(e)}
+
+    return quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices, international, pool_result
 
 
 @api_v1.route('/ai/screen', methods=['POST'])
@@ -590,7 +615,7 @@ def ai_screen_query():
     if not query:
         return error(40001, "请输入选股问题", "INVALID_PARAM")
 
-    quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices, international = _gather_market_data()
+    quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices, international, pool_result = _gather_market_data()
     if not quotes:
         return error(50003, "暂无实时行情数据", "NO_DATA")
 
@@ -603,12 +628,22 @@ def ai_screen_query():
 @login_required
 def ai_quick_pick():
     """一键选股：AI 自动分析市场推荐8只短线标的（结果自动落库）"""
-    quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices, international = _gather_market_data()
+    quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices, international, pool_result = _gather_market_data()
     if not quotes:
         return error(50003, "暂无实时行情数据", "NO_DATA")
 
     from ai_screener import ai_quick_pick
     result = ai_quick_pick(quotes, sentiment, sector_ranking, fund_flow, concept_ranking, indices, international)
+
+    # 附带候选池元信息（前端可展示"本次选股基于哪些主线板块"）
+    if pool_result:
+        result['pool'] = {
+            'sectors': pool_result.get('sectors', []),
+            'stats': pool_result.get('stats', {}),
+            'snapshot': pool_result.get('snapshot_meta', {}),
+            'degraded_reason': pool_result.get('degraded_reason'),
+            'candidate_count': len(pool_result.get('candidates', [])),
+        }
     
     # 自动落库：保存选股结果，供复盘
     if result.get('success') and result.get('stocks'):

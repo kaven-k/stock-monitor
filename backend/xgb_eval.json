@@ -1,12 +1,12 @@
 {
-  "accuracy": 74.5,
-  "precision": 75.0,
-  "recall": 73.7,
-  "f1": 74.3,
-  "auc": 82.4,
-  "test_samples": 8694,
-  "positive_ratio": 50.1,
-  "scale_pos_weight": 1.0,
+  "accuracy": 56.4,
+  "precision": 53.0,
+  "recall": 54.8,
+  "f1": 53.9,
+  "auc": 59.2,
+  "test_samples": 247200,
+  "positive_ratio": 46.5,
+  "scale_pos_weight": 1.15,
   "feature_names": [
     "gap_pct",
     "today_chg",
@@ -23,5 +23,7 @@
     "vs_ma5",
     "vs_ma10"
   ],
-  "hold_days": 2
+  "hold_days": 1,
+  "entry_mode": "close",
+  "label_desc": "第idx日收盘买入 → 第idx+1日收盘卖出"
 }

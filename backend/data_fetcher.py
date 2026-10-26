@@ -449,6 +449,43 @@ def _fetch_kline_baidu_fallback(code, count=250):
         return []
 
 
+def _fetch_kline_sina(code, category=4, count=250):
+    """
+    通过新浪财经获取日K线（兜底源）
+    东财 push2his / 同花顺在某些网络环境不可达时，新浪通常仍可用。
+    返回: [{"date","open","high","low","close","volume"}, ...]
+    """
+    if category != 4:
+        return []  # 新浪仅支持日线
+    try:
+        import requests as req
+        symbol = f"{_get_prefix(code)}{code}"
+        url = ("https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+               "CN_MarketData.getKLineData")
+        params = {"symbol": symbol, "scale": "240", "ma": "no", "datalen": count}
+        r = req.get(url, params=params, timeout=12,
+                    headers={"User-Agent": UA, "Referer": "https://finance.sina.com.cn"})
+        rows = r.json()
+        if not rows:
+            return []
+        result = []
+        for row in rows:
+            try:
+                result.append({
+                    "date": row["day"][:10],
+                    "open": float(row["open"]),
+                    "high": float(row["high"]),
+                    "low": float(row["low"]),
+                    "close": float(row["close"]),
+                    "volume": float(row["volume"]),
+                })
+            except (KeyError, ValueError, TypeError):
+                continue
+        return result
+    except Exception:
+        return []
+
+
 def fetch_kline(code, period="day", count=250):
     """统一的K线获取入口, 支持 day/week/month"""
     category_map = {"day": 4, "week": 5, "month": 6}
@@ -471,7 +508,13 @@ def fetch_kline(code, period="day", count=250):
         if result:
             return result
     
-    # 4. 最后尝试 mootdx 降级 (日线)
+    # 4. 新浪财经日线兜底（东财/同花顺不可达时的最后防线）
+    if category == 4:
+        result = _fetch_kline_sina(code, category, count)
+        if result:
+            return result
+    
+    # 5. 最后尝试 mootdx 降级 (日线)
     if MOOTDX_AVAILABLE:
         return fetch_kline_mootdx(code, 4, count)
     

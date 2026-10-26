@@ -1,12 +1,27 @@
 """
 全市场K线标注 + XGBoost 训练
-对 price_history 中每只股票每一天，计算特征并标注"2天后是否盈利"
-输出: backend/xgb_model.pkl + backend/xgb_eval.json
+对 price_history 中每只股票每一天，计算特征并标注"持有 N 天后是否盈利"
+
+★ 入场模式（v7 新增）—— 这是实盘能否落地的关键：
+  entry='open'  : 第 idx 天【开盘】买入 → 第 idx+N-1 天收盘卖出
+                  N=2 时即"今天开盘买、明天收盘卖"（原模型）
+                  ⚠️ N=1 时变成"当天开盘买、当天收盘卖"，A股 T+1 禁止，不可用
+  entry='close' : 第 idx 天【收盘】买入 → 第 idx+N 天收盘卖出
+                  N=1 时即"今天尾盘买、明天收盘卖" ← 这才是短线实盘的正确姿势
+                  T+1 约束下，尾盘买入次日卖出是唯一能吃到"当日趋势→次日溢价"的路径
+
+用法：
+    python3 train_xgb.py                  # 默认 hold=1, entry=close（尾盘买次日卖）
+    python3 train_xgb.py 2 open           # 复现原模型（开盘买持有2天）
+    python3 train_xgb.py 1 close --default  # 训练并覆盖为默认模型
+
+输出: backend/xgb_model_h{hold}_{entry}.pkl + backend/xgb_eval_h{hold}_{entry}.json
 """
 import sqlite3
 import statistics
 import json
 import os
+import sys
 import numpy as np
 from collections import defaultdict
 from xgboost import XGBClassifier
@@ -14,18 +29,42 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stock_monitor.db")
-MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "xgb_model.pkl")
-EVAL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "xgb_eval.json")
 
-HOLD_DAYS = 2
+# 默认训练参数：hold=1, entry=close（尾盘买 → 次日收盘卖）
+HOLD_DAYS = 1
+ENTRY_MODE = "close"
 MIN_HISTORY = 20
+AS_DEFAULT = False
+SPLIT_MODE = "random"
+NO_FUTURE = False
+USE_MARKET = False   # 是否加入市场情绪特征（需先运行 market_features.py）
+USE_FUND = False     # 是否加入资金流/板块特征（需先运行 download_fund_history.py）
+VALID_ONLY = False   # 仅用有效交易日样本（不加特征，用于公平对比基线）
+
+# 开盘时刻【可知】的特征（不含任何当日收盘后才产生的量价信息）
+# 顺序对应 compute_features 的键顺序
+OPEN_KNOWN_FEATURES = ["gap_pct", "pri_5d_chg", "pri_10d_chg", "pri_1d_chg", "up_days_5"]
+
+_MODEL_TPL = "xgb_model_h{hold}_{entry}.pkl"
+_EVAL_TPL = "xgb_eval_h{hold}_{entry}.json"
+
+
+def _paths(hold, entry):
+    d = os.path.dirname(os.path.abspath(__file__))
+    return (os.path.join(d, _MODEL_TPL.format(hold=hold, entry=entry)),
+            os.path.join(d, _EVAL_TPL.format(hold=hold, entry=entry)))
+
+def _norm_date(d):
+    """日期归一化为 YYYYMMDD（东财源为 2026-10-26，新浪源为 20261026）"""
+    return str(d).replace("-", "").strip()
+
 
 def load_stock_pool():
     """加载所有有足够K线的股票代码"""
     conn = sqlite3.connect(DB_PATH)
     codes = conn.execute(
         "SELECT DISTINCT code FROM price_history GROUP BY code HAVING COUNT(*) >= ?",
-        (MIN_HISTORY + HOLD_DAYS,)
+        (MIN_HISTORY + HOLD_DAYS + 1,)
     ).fetchall()
     conn.close()
     return [c[0] for c in codes]
@@ -135,12 +174,24 @@ def compute_features(k, idx):
     
     return f
 
-def compute_label(k, idx, hold_days):
-    """标注：从idx那天开盘买入，hold_days天后卖出盈亏"""
-    if idx + hold_days >= len(k):
+def compute_label(k, idx, hold_days, entry="open"):
+    """
+    标注：按入场模式计算持有期盈亏
+    entry='open'  : idx 日开盘买入 → idx+hold_days-1 日收盘卖出
+    entry='close' : idx 日收盘买入 → idx+hold_days 日收盘卖出（尾盘买，T+1 次日卖）
+    """
+    if entry == "close":
+        if idx + hold_days >= len(k):
+            return None
+        entry_price = k[idx][4]       # close of day idx
+        exit_price = k[idx + hold_days][4]   # close after hold_days
+    else:
+        if idx + hold_days >= len(k):
+            return None
+        entry_price = k[idx][1]       # open of day idx
+        exit_price = k[idx + hold_days - 1][4]
+    if not entry_price or not exit_price:
         return None
-    entry_price = k[idx][1]  # open of day idx
-    exit_price = k[idx + hold_days - 1][4]  # close after hold_days-1
     return 1 if exit_price > entry_price else 0
 
 def generate_samples():
@@ -149,24 +200,71 @@ def generate_samples():
     print(f"候选股票: {len(codes)} 只")
     
     conn = sqlite3.connect(DB_PATH)
-    X_list, y_list = [], []
+    X_list, y_list, date_list, code_list, ret_list = [], [], [], [], []
     stock_counts = []
+
+    # 市场情绪特征（T日收盘可知，无前视偏差）
+    market_feats = {}
+    if USE_MARKET or VALID_ONLY:
+        try:
+            from market_features import load_market_features, MARKET_FEATURE_NAMES
+            market_feats = load_market_features()
+            print(f"  市场情绪特征: {len(market_feats)} 个交易日 × {len(MARKET_FEATURE_NAMES)} 维")
+            if not market_feats:
+                print("  ⚠️  market_daily 为空，请先运行: python3 market_features.py")
+        except Exception as e:
+            print(f"  ⚠️  市场特征加载失败({e})，本次不使用")
+
+    # 资金流/板块特征（历史，需 download_fund_history.py 生成）
+    fund_feats = {}
+    FUND_FEATURE_NAMES = []
+    if USE_FUND:
+        try:
+            from fund_history import load_fund_features, FUND_FEATURE_NAMES
+            fund_feats = load_fund_features()
+            print(f"  资金流/板块特征: {len(fund_feats)} 个交易日")
+            if not fund_feats:
+                print("  ⚠️  资金流历史为空，请先运行: python3 download_fund_history.py")
+        except Exception as e:
+            print(f"  ⚠️  资金流特征不可用({e})，本次不使用")
+            fund_feats = {}
+            FUND_FEATURE_NAMES = []
+    
+    # 收盘买入模式需多留一天做卖出价
+    tail_reserve = HOLD_DAYS if ENTRY_MODE == "close" else HOLD_DAYS
     
     for ci, code in enumerate(codes):
         k = get_klines(code, conn)
-        if len(k) < MIN_HISTORY + HOLD_DAYS:
+        if len(k) < MIN_HISTORY + tail_reserve + 1:
             continue
         
         stock_samples = 0
-        # 从 MIN_HISTORY 天开始，留出最后 HOLD_DAYS 做标签
-        for idx in range(MIN_HISTORY - 1, len(k) - HOLD_DAYS):
-            label = compute_label(k, idx, HOLD_DAYS)
+        # 从 MIN_HISTORY 天开始，留出尾部做标签
+        for idx in range(MIN_HISTORY - 1, len(k) - tail_reserve - 1):
+            label = compute_label(k, idx, HOLD_DAYS, ENTRY_MODE)
             if label is None:
+                continue
+            d = _norm_date(k[idx][0])
+            # 只保留有效交易日（过滤早期稀疏/脏数据）
+            if (USE_MARKET or VALID_ONLY) and market_feats and d not in market_feats:
                 continue
             features = compute_features(k, idx)
             feats = list(features.values())
+            if USE_MARKET and market_feats:
+                feats += [market_feats[d].get(n, 0) for n in MARKET_FEATURE_NAMES]
+            if USE_FUND and fund_feats and FUND_FEATURE_NAMES:
+                fv = fund_feats.get(d, {}).get(code)
+                feats += list(fv) if fv else [0] * len(FUND_FEATURE_NAMES)
             X_list.append(feats)
             y_list.append(label)
+            date_list.append(k[idx][0])   # 样本日期（用于时间序列切分）
+            code_list.append(code)
+            # 真实收益（与标签同口径），供回测计算
+            if ENTRY_MODE == "close":
+                ep, xp = k[idx][4], k[idx + HOLD_DAYS][4]
+            else:
+                ep, xp = k[idx][1], k[idx + HOLD_DAYS - 1][4]
+            ret_list.append((xp - ep) / ep if ep else 0.0)
             stock_samples += 1
         
         if stock_samples > 0:
@@ -175,30 +273,57 @@ def generate_samples():
         if (ci + 1) % 500 == 0:
             print(f"  进度: {ci+1}/{len(codes)} 只股票, 累计 {len(X_list)} 条样本")
     
+    if not X_list:
+        conn.close()
+        print("⚠️  无有效样本，请检查 price_history 数据量")
+        return np.array([]), np.array([]), [], [], [], [], []
+
+    # 特征名（必须在 conn 关闭前取，取一只样本股票的稳定索引）
+    feature_names = []
+    for c in codes[:20]:
+        kk = get_klines(c, conn)
+        if len(kk) > MIN_HISTORY + 1:
+            feature_names = list(compute_features(kk, MIN_HISTORY).keys())
+            break
+
     conn.close()
     
     X = np.array(X_list, dtype=np.float32)
     y = np.array(y_list, dtype=np.int32)
     
-    # 特征名
-    feature_names = list(compute_features(
-        get_klines(codes[0], sqlite3.connect(DB_PATH)), MIN_HISTORY
-    ).keys())
-    
     print(f"\n总样本: {len(X)} 条")
     print(f"正样本(盈利): {sum(y)} ({sum(y)/len(y)*100:.1f}%)")
     print(f"负样本(亏损): {len(y)-sum(y)} ({(len(y)-sum(y))/len(y)*100:.1f}%)")
     
-    return X, y, feature_names
+    return X, y, feature_names, np.array(date_list), np.array(code_list), np.array(ret_list)
 
-def train_model(X, y, feature_names):
-    """训练 XGBoost 分类器"""
+def train_model(X, y, feature_names, dates=None, split_mode="random"):
+    """
+    训练 XGBoost 分类器
+
+    split_mode:
+      'random' —— 随机切分（原做法）。⚠️ 对时间序列数据有信息泄漏风险：
+                  同一只股票相邻交易日的样本高度相关，随机切分会让"未来样本"
+                  进入训练集，导致 AUC 虚高（实测可比时间切分高出 20+ 个点）。
+      'time'   —— 按日期切分：前 80% 时间训练，后 20% 时间测试。
+                  这才是实盘真实场景（用历史预测未来），指标可信但会低得多。
+    """
     print("\n===== 训练 XGBoost =====")
     
     # 划分训练/测试集
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
+    if split_mode == "time" and dates is not None and len(dates) == len(X):
+        order = np.argsort(dates)
+        X, y = X[order], y[order]
+        cut = int(len(X) * 0.8)
+        X_train, X_test = X[:cut], X[cut:]
+        y_train, y_test = y[:cut], y[cut:]
+        print(f"  切分模式: 时间序列 | 训练≤{dates[order][cut-1]} "
+              f"| 测试>{dates[order][cut]} ({len(y_test)} 条)")
+    else:
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y
+        )
+        print(f"  切分模式: 随机（含时序泄漏风险）")
     
     # 处理类别不平衡
     pos_ratio = sum(y) / len(y)
@@ -238,6 +363,11 @@ def train_model(X, y, feature_names):
         'scale_pos_weight': round(scale_pos_weight, 2),
         'feature_names': feature_names,
         'hold_days': HOLD_DAYS,
+        'entry_mode': ENTRY_MODE,
+        'split_mode': split_mode,
+        'train_samples': len(y_train),
+        'label_desc': (f"第idx日{'收盘' if ENTRY_MODE=='close' else '开盘'}买入 → "
+                       f"第idx+{HOLD_DAYS}日收盘卖出"),
     }
     
     print(f"\n===== 模型评估 =====")
@@ -260,19 +390,60 @@ def train_model(X, y, feature_names):
 def save_model(model, metrics):
     """保存模型和评估指标"""
     import joblib
-    joblib.dump(model, MODEL_PATH)
-    with open(EVAL_PATH, 'w', encoding='utf-8') as f:
+    d = os.path.dirname(os.path.abspath(__file__))
+    model_path, eval_path = _paths(HOLD_DAYS, ENTRY_MODE)
+    joblib.dump(model, model_path)
+    with open(eval_path, 'w', encoding='utf-8') as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2)
-    print(f"\n模型已保存: {MODEL_PATH}")
-    print(f"评估已保存: {EVAL_PATH}")
+    print(f"\n模型已保存: {model_path}")
+    print(f"评估已保存: {eval_path}")
+
+    if AS_DEFAULT:
+        default_model = os.path.join(d, "xgb_model.pkl")
+        default_eval = os.path.join(d, "xgb_eval.json")
+        joblib.dump(model, default_model)
+        with open(default_eval, 'w', encoding='utf-8') as f:
+            json.dump(metrics, f, ensure_ascii=False, indent=2)
+        print(f"已覆盖默认模型: {default_model}")
 
 def main():
-    print(f"全市场K线标注 + XGBoost 训练 (持仓 {HOLD_DAYS} 天)")
-    print(f"DB: {DB_PATH}")
-    print("-" * 50)
+    global HOLD_DAYS, ENTRY_MODE, AS_DEFAULT, SPLIT_MODE, NO_FUTURE, USE_MARKET, USE_FUND, VALID_ONLY
+
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    AS_DEFAULT = "--default" in sys.argv
+    SPLIT_MODE = "time" if "--time" in sys.argv else "random"
+    NO_FUTURE = "--nofuture" in sys.argv
+    if len(args) >= 1:
+        HOLD_DAYS = int(args[0])
+    if len(args) >= 2:
+        ENTRY_MODE = args[1].lower()
+    USE_MARKET = "--market" in sys.argv
+    USE_FUND = "--fund" in sys.argv
+    VALID_ONLY = "--validonly" in sys.argv
+    if ENTRY_MODE not in ("open", "close"):
+        ENTRY_MODE = "close"
+    if HOLD_DAYS < 1:
+        HOLD_DAYS = 1
+    if ENTRY_MODE == "open" and HOLD_DAYS == 1:
+        print("⚠️  entry=open 且 hold=1 意味着'当天开盘买、当天收盘卖'，A股 T+1 禁止！")
+        print("    已自动改为 hold=2（今天开盘买、明天收盘卖）")
+        HOLD_DAYS = 2
+
+    print(f"全市场K线标注 + XGBoost 训练")
+    print(f"  持仓天数: {HOLD_DAYS}  入场: {ENTRY_MODE}"
+          f"  ({'收盘买入·尾盘买次日卖' if ENTRY_MODE=='close' else '开盘买入'})")
+    print(f"  标签定义: 第idx日{'收盘' if ENTRY_MODE=='close' else '开盘'}买入 → "
+          f"第idx+{HOLD_DAYS}日收盘卖出")
+    print(f"  DB: {DB_PATH}")
+    print("-" * 60)
     
-    X, y, feature_names = generate_samples()
-    model, metrics = train_model(X, y, feature_names)
+    X, y, feature_names, dates, codes_arr, rets_arr = generate_samples()
+    if NO_FUTURE:
+        keep = [i for i, n in enumerate(feature_names) if n in OPEN_KNOWN_FEATURES]
+        print(f"  ⚠️  剔除前视特征，仅保留开盘可知特征: {[feature_names[i] for i in keep]}")
+        X = X[:, keep]
+        feature_names = [feature_names[i] for i in keep]
+    model, metrics = train_model(X, y, feature_names, dates, SPLIT_MODE)
     save_model(model, metrics)
 
 if __name__ == '__main__':

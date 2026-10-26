@@ -1,0 +1,22 @@
+{
+  "accuracy": 64.1,
+  "precision": 61.4,
+  "recall": 62.1,
+  "f1": 61.7,
+  "auc": 68.8,
+  "test_samples": 246115,
+  "positive_ratio": 46.6,
+  "scale_pos_weight": 1.14,
+  "feature_names": [
+    "gap_pct",
+    "pri_5d_chg",
+    "pri_10d_chg",
+    "pri_1d_chg",
+    "up_days_5"
+  ],
+  "hold_days": 2,
+  "entry_mode": "open",
+  "split_mode": "random",
+  "train_samples": 984457,
+  "label_desc": "第idx日开盘买入 → 第idx+2日收盘卖出"
+}

@@ -1,0 +1,31 @@
+{
+  "accuracy": 70.1,
+  "precision": 68.0,
+  "recall": 68.1,
+  "f1": 68.0,
+  "auc": 77.3,
+  "test_samples": 232377,
+  "positive_ratio": 46.7,
+  "scale_pos_weight": 1.14,
+  "feature_names": [
+    "gap_pct",
+    "today_chg",
+    "day_range",
+    "upper_shadow",
+    "lower_shadow",
+    "vol_ratio",
+    "pri_5d_chg",
+    "pri_10d_chg",
+    "pri_1d_chg",
+    "up_days_5",
+    "price_position",
+    "vol_trend",
+    "vs_ma5",
+    "vs_ma10"
+  ],
+  "hold_days": 1,
+  "entry_mode": "close",
+  "split_mode": "random",
+  "train_samples": 929504,
+  "label_desc": "第idx日收盘买入 → 第idx+1日收盘卖出"
+}
